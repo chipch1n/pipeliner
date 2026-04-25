@@ -1,0 +1,278 @@
+:root {
+  font-family: Inter, Segoe UI, Arial, sans-serif;
+  color: #111;
+  background: #f7f7f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+  padding: 12px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-decoration: none;
+  min-width: 96px;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.viewport {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 420px;
+}
+
+.panel {
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-head select {
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px 8px;
+}
+
+.mini-preview {
+  min-width: 90px;
+  padding: 6px 10px;
+}
+
+.panel img {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.nodes {
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.branch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.branch-lane {
+  border: 1px dashed #d8d8d8;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fafafa;
+}
+
+.branch-title {
+  font-size: 12px;
+  color: #555;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.nodes-toolbar {
+  display: flex;
+  gap: 8px;
+  position: relative;
+}
+
+.node-picker {
+  position: relative;
+}
+
+.plus-button {
+  min-width: 100px;
+}
+
+.node-picker-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  min-width: 120px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.08);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 10;
+}
+
+.menu-item {
+  border: 1px solid transparent;
+  background: #fff;
+  border-radius: 6px;
+  text-align: left;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  border-color: #ddd;
+  background: #f8f8f8;
+}
+
+.node-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.node-card {
+  min-width: 220px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fcfcfc;
+}
+
+.node-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.node-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.mini {
+  border: 1px solid #d0d0d0;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+}
+
+.mini:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.active-branch {
+  border-color: #111;
+  font-weight: 700;
+}
+
+.danger {
+  color: #a60000;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.field select {
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px 8px;
+}
+
+.field input[type="text"] {
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px 8px;
+}
+
+.inline-field {
+  flex-direction: row;
+  align-items: center;
+}
+
+.placeholder {
+  min-height: 120px;
+  border: 1px dashed #ddd;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  padding: 8px;
+}
+
+.error {
+  color: #a60000;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .viewport {
+    grid-template-columns: 1fr;
+  }
+}
