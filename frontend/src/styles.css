@@ -133,6 +133,29 @@ body {
   letter-spacing: 0.04em;
 }
 
+.branch-entry {
+  margin-bottom: 8px;
+}
+
+.branch-entry-label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: #666;
+}
+
+.branch-entry-hint {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: #888;
+}
+
+.branch-entry select {
+  width: 100%;
+}
+
 .nodes-toolbar {
   display: flex;
   gap: 8px;

@@ -1,42 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-
-type NodeType = "blur" | "noise" | "make_mask";
-
-type BlurNode = {
-  id: string;
-  type: "blur";
-  branch: string;
-  params: { radius: number; maskNodeId?: string };
-};
-
-type NoiseNode = {
-  id: string;
-  type: "noise";
-  branch: string;
-  params: { intensity: number; maskNodeId?: string };
-};
-
-type MakeMaskNode = {
-  id: string;
-  type: "make_mask";
-  branch: string;
-  params: { threshold: number; invert: boolean };
-};
-
-type PipelineNode = BlurNode | NoiseNode | MakeMaskNode;
-
-const API_URL = "http://localhost:8000/process-image";
-
-function createNode(type: NodeType): PipelineNode {
-  const id = `${type}-${crypto.randomUUID()}`;
-  if (type === "blur") {
-    return { id, type, branch: "main", params: { radius: 4 } };
-  }
-  if (type === "noise") {
-    return { id, type, branch: "main", params: { intensity: 20 } };
-  }
-  return { id, type, branch: "main", params: { threshold: 128, invert: false } };
-}
+import {
+  applyNodeUpdate,
+  branchEntrySourceOptions,
+  createNode,
+  DEFAULT_PROCESS_API_URL,
+  fetchProcessedImageBlob,
+  knownBranchesFromNodes,
+  maskSourceOptionsForConsumer,
+  moveNodeBranchDown,
+  moveNodeBranchUp,
+  nodesByBranchGroups,
+  canReorderNodeInBranch,
+  orderPipelineNodes,
+  removeNodeFromList,
+  reorderNodesWithinBranch,
+  withBlurMask,
+  withBlurRadius,
+  withMakeMaskInvert,
+  withMakeMaskThreshold,
+  withNoiseIntensity,
+  withNoiseMask,
+  withNoiseSeed
+} from "./pipelineLogic";
+import type { BranchSources, NodeType, PipelineNode } from "./pipelineTypes";
 
 export default function App() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -47,6 +33,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showNodePicker, setShowNodePicker] = useState(false);
   const [previewNodeId, setPreviewNodeId] = useState<string>("final");
+  const [branchSources, setBranchSources] = useState<BranchSources>({});
   const timerRef = useRef<number | null>(null);
 
   const canDownload = useMemo(() => Boolean(processedUrl), [processedUrl]);
@@ -71,42 +58,15 @@ export default function App() {
   };
 
   const updateNode = (id: string, updater: (node: PipelineNode) => PipelineNode) => {
-    setNodes((prev) => {
-      const previousMaskByNodeId = new Map(
-        prev
-          .filter((n): n is BlurNode | NoiseNode => n.type === "blur" || n.type === "noise")
-          .map((n) => [n.id, n.params.maskNodeId])
-      );
-
-      const next = prev.map((n) => (n.id === id ? updater(n) : n));
-
-      return next.map((n) => {
-        if (n.type !== "blur" && n.type !== "noise") return n;
-        const prevMask = previousMaskByNodeId.get(n.id);
-        if (!prevMask || n.params.maskNodeId) return n;
-        return {
-          ...n,
-          params: {
-            ...n.params,
-            maskNodeId: prevMask
-          }
-        };
-      });
-    });
+    setNodes((prev) => applyNodeUpdate(prev, id, updater));
   };
 
   const removeNode = (id: string) => {
-    setNodes((prev) => prev.filter((n) => n.id !== id));
+    setNodes((prev) => removeNodeFromList(prev, id));
   };
 
   const moveNode = (index: number, direction: -1 | 1) => {
-    setNodes((prev) => {
-      const target = index + direction;
-      if (target < 0 || target >= prev.length) return prev;
-      const next = [...prev];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
+    setNodes((prev) => reorderNodesWithinBranch(prev, index, direction));
   };
 
   const addNode = (type: NodeType) => {
@@ -114,56 +74,76 @@ export default function App() {
     setShowNodePicker(false);
   };
 
-  const maskNodeOptions = useMemo(
-    () =>
-      nodes.map((node) => ({
-        id: node.id,
-        label: `${node.branch}: ${node.type} (${node.id.slice(0, 6)})`
-      })),
-    [nodes]
-  );
+  const maskPickerByNodeId = useMemo(() => {
+    const map = new Map<string, { id: string; label: string }[]>();
+    for (const n of nodes) {
+      if (n.type === "blur" || n.type === "noise") {
+        map.set(n.id, maskSourceOptionsForConsumer(nodes, n.id, branchSources));
+      }
+    }
+    return map;
+  }, [nodes, branchSources]);
 
-  const knownBranches = useMemo(() => {
-    const set = new Set<string>(["main"]);
-    for (const node of nodes) set.add(node.branch);
-    return [...set];
-  }, [nodes]);
+  const knownBranches = useMemo(() => knownBranchesFromNodes(nodes), [nodes]);
 
-  const nodesByBranch = useMemo(
-    () => knownBranches.map((branch) => ({ branch, nodes: nodes.filter((node) => node.branch === branch) })),
-    [knownBranches, nodes]
-  );
+  useEffect(() => {
+    setBranchSources((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const b of knownBranches) {
+        if (b === "main") continue;
+        if (next[b] === undefined) {
+          next[b] = "original";
+          changed = true;
+        }
+      }
+      try {
+        for (const b of knownBranches) {
+          if (b === "main") continue;
+          const allowed = new Set(branchEntrySourceOptions(nodes, b).map((o) => o.value));
+          const raw = next[b] ?? "original";
+          if (!allowed.has(raw)) {
+            next[b] = "original";
+            changed = true;
+          }
+        }
+        orderPipelineNodes(nodes, next);
+      } catch {
+        for (const b of knownBranches) {
+          if (b === "main") continue;
+          if (next[b] !== "original") {
+            next[b] = "original";
+            changed = true;
+          }
+        }
+      }
+      for (const key of Object.keys(next)) {
+        if (key !== "main" && !knownBranches.includes(key)) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [nodes, knownBranches, branchSources]);
+
+  const nodesByBranch = useMemo(() => nodesByBranchGroups(nodes), [nodes]);
 
   const processImage = async () => {
     if (!uploadedFile) return;
-
-    const payload = {
-      nodes: nodes.map((node) => ({
-        id: node.id,
-        type: node.type,
-        branch: node.branch,
-        params: node.params
-      }))
-    };
-
-    const formData = new FormData();
-    formData.append("image", uploadedFile);
-    formData.append("pipeline", JSON.stringify(payload));
-    if (previewNodeId !== "final") {
-      formData.append("preview_node_id", previewNodeId);
-    }
 
     setIsProcessing(true);
     setError(null);
 
     try {
-      const response = await fetch(API_URL, { method: "POST", body: formData });
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || "Failed to process image");
-      }
-
-      const blob = await response.blob();
+      const blob = await fetchProcessedImageBlob(
+        DEFAULT_PROCESS_API_URL,
+        uploadedFile,
+        nodes,
+        previewNodeId,
+        branchSources,
+        knownBranches
+      );
       const url = URL.createObjectURL(blob);
       if (processedUrl) URL.revokeObjectURL(processedUrl);
       setProcessedUrl(url);
@@ -180,7 +160,7 @@ export default function App() {
     timerRef.current = window.setTimeout(() => {
       void processImage();
     }, 180);
-  }, [nodes, uploadedFile, previewNodeId]);
+  }, [nodes, uploadedFile, previewNodeId, branchSources, knownBranches]);
 
   useEffect(() => {
     if (previewNodeId === "final") return;
@@ -264,202 +244,195 @@ export default function App() {
           {nodesByBranch.map((branchGroup) => (
             <section className="branch-lane" key={branchGroup.branch}>
               <div className="branch-title">{branchGroup.branch}</div>
+              {branchGroup.branch !== "main" && (
+                <label className="field branch-entry">
+                  <span className="branch-entry-label">Entry from</span>
+                  <span className="branch-entry-hint">
+                    Entry from another lane or main (not from this branch). Execution order follows mask links and
+                    these fork links; ← → only swaps within the same branch.
+                  </span>
+                  <select
+                    value={branchSources[branchGroup.branch] ?? "original"}
+                    onChange={(e) =>
+                      setBranchSources((prev) => ({
+                        ...prev,
+                        [branchGroup.branch]: e.target.value
+                      }))
+                    }
+                  >
+                    {branchEntrySourceOptions(nodes, branchGroup.branch).map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="node-list">
                 {branchGroup.nodes.map((node) => {
                   const index = nodes.findIndex((n) => n.id === node.id);
                   const branchIndex = knownBranches.indexOf(node.branch);
                   return (
                     <div className="node-card" key={node.id}>
-              <div className="node-head">
-                <strong>{node.type.toUpperCase()}</strong>
-                <div className="node-actions">
-                  <button
-                    className="mini"
-                    onClick={() =>
-                      updateNode(node.id, (n) => {
-                        const from = knownBranches.indexOf(n.branch);
-                        if (from <= 0) return n;
-                        return { ...n, branch: knownBranches[from - 1] };
-                      })
-                    }
-                    disabled={branchIndex <= 0}
-                    title="Move to upper branch"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    className="mini"
-                    onClick={() =>
-                      updateNode(node.id, (n) => {
-                        const from = knownBranches.indexOf(n.branch);
-                        if (from < knownBranches.length - 1) {
-                          return { ...n, branch: knownBranches[from + 1] };
-                        }
-                        const newBranch = `branch-${knownBranches.length}`;
-                        return { ...n, branch: newBranch };
-                      })
-                    }
-                    title="Move to lower branch"
-                  >
-                    ↓
-                  </button>
-                  <button className="mini" onClick={() => moveNode(index, -1)} disabled={index === 0}>
-                    ←
-                  </button>
-                  <button
-                    className="mini"
-                    onClick={() => moveNode(index, 1)}
-                    disabled={index === nodes.length - 1}
-                  >
-                    →
-                  </button>
-                  <button
-                    className={`mini ${previewNodeId === node.id ? "active-branch" : ""}`}
-                    onClick={() => setPreviewNodeId(node.id)}
-                    title="Show this node in viewport"
-                  >
-                    V
-                  </button>
-                  <button className="mini danger" onClick={() => removeNode(node.id)}>
-                    x
-                  </button>
-                </div>
-              </div>
+                      <div className="node-head">
+                        <strong>{node.type.toUpperCase()}</strong>
+                        <div className="node-actions">
+                          <button
+                            className="mini"
+                            onClick={() => updateNode(node.id, (n) => moveNodeBranchUp(n, knownBranches))}
+                            disabled={branchIndex <= 0}
+                            title="Move to upper branch"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            className="mini"
+                            onClick={() => updateNode(node.id, (n) => moveNodeBranchDown(n, knownBranches))}
+                            title="Move to lower branch"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            className="mini"
+                            onClick={() => moveNode(index, -1)}
+                            disabled={!canReorderNodeInBranch(nodes, index, -1)}
+                            title="Swap with the previous node on this branch (skips other lanes in the flat list)"
+                          >
+                            ←
+                          </button>
+                          <button
+                            className="mini"
+                            onClick={() => moveNode(index, 1)}
+                            disabled={!canReorderNodeInBranch(nodes, index, 1)}
+                            title="Swap with the next node on this branch (skips other lanes in the flat list)"
+                          >
+                            →
+                          </button>
+                          <button
+                            className={`mini ${previewNodeId === node.id ? "active-branch" : ""}`}
+                            onClick={() => setPreviewNodeId(node.id)}
+                            title="Show this node in viewport"
+                          >
+                            V
+                          </button>
+                          <button className="mini danger" onClick={() => removeNode(node.id)}>
+                            x
+                          </button>
+                        </div>
+                      </div>
 
-              {node.type === "blur" && (
-                <label className="field">
-                  Radius: {node.params.radius.toFixed(1)}
-                  <input
-                    type="range"
-                    min={0}
-                    max={30}
-                    step={0.5}
-                    value={node.params.radius}
-                    onChange={(e) =>
-                      updateNode(node.id, (n) =>
-                        n.type === "blur"
-                          ? {
-                              ...n,
-                              params: {
-                                ...n.params,
-                                radius: Number(e.target.value)
-                              }
+                      {node.type === "blur" && (
+                        <label className="field">
+                          Radius: {node.params.radius.toFixed(1)}
+                          <input
+                            type="range"
+                            min={0}
+                            max={30}
+                            step={0.5}
+                            value={node.params.radius}
+                            onChange={(e) =>
+                              updateNode(node.id, (n) => withBlurRadius(n, Number(e.target.value)))
                             }
-                          : n
-                      )
-                    }
-                  />
-                  <select
-                    value={node.params.maskNodeId ?? ""}
-                    onChange={(e) =>
-                      updateNode(node.id, (n) =>
-                        n.type === "blur"
-                          ? {
-                              ...n,
-                              params: {
-                                ...n.params,
-                                maskNodeId: e.target.value || undefined
-                              }
+                          />
+                          <select
+                            value={node.params.maskNodeId ?? ""}
+                            onChange={(e) =>
+                              updateNode(node.id, (n) =>
+                                withBlurMask(n, e.target.value || undefined)
+                              )
                             }
-                          : n
-                      )
-                    }
-                  >
-                    <option value="">No mask</option>
-                    {maskNodeOptions.map((maskNode) => (
-                      <option key={maskNode.id} value={maskNode.id}>
-                        {maskNode.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+                          >
+                            <option value="">No mask</option>
+                            {(maskPickerByNodeId.get(node.id) ?? []).map((maskNode) => (
+                              <option key={maskNode.id} value={maskNode.id}>
+                                {maskNode.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
 
-              {node.type === "noise" && (
-                <label className="field">
-                  Intensity: {node.params.intensity.toFixed(0)}
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={node.params.intensity}
-                    onChange={(e) =>
-                      updateNode(node.id, (n) =>
-                        n.type === "noise"
-                          ? {
-                              ...n,
-                              params: {
-                                ...n.params,
-                                intensity: Number(e.target.value)
+                      {node.type === "noise" && (
+                        <>
+                          <label className="field">
+                            Intensity: {node.params.intensity.toFixed(0)}
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={node.params.intensity}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) =>
+                                  withNoiseIntensity(n, Number(e.target.value))
+                                )
                               }
-                            }
-                          : n
-                      )
-                    }
-                  />
-                  <select
-                    value={node.params.maskNodeId ?? ""}
-                    onChange={(e) =>
-                      updateNode(node.id, (n) =>
-                        n.type === "noise"
-                          ? {
-                              ...n,
-                              params: {
-                                ...n.params,
-                                maskNodeId: e.target.value || undefined
+                            />
+                          </label>
+                          <label className="field inline-field">
+                            Seed:
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={node.params.seed ?? 0}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) =>
+                                  withNoiseSeed(n, Number(e.target.value) || 0)
+                                )
                               }
-                            }
-                          : n
-                      )
-                    }
-                  >
-                    <option value="">No mask</option>
-                    {maskNodeOptions.map((maskNode) => (
-                      <option key={maskNode.id} value={maskNode.id}>
-                        {maskNode.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+                            />
+                          </label>
+                          <label className="field">
+                            <select
+                              value={node.params.maskNodeId ?? ""}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) =>
+                                  withNoiseMask(n, e.target.value || undefined)
+                                )
+                              }
+                            >
+                              <option value="">No mask</option>
+                              {(maskPickerByNodeId.get(node.id) ?? []).map((maskNode) => (
+                                <option key={maskNode.id} value={maskNode.id}>
+                                  {maskNode.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </>
+                      )}
 
-              {node.type === "make_mask" && (
-                <>
-                  <label className="field">
-                    Threshold: {node.params.threshold}
-                    <input
-                      type="range"
-                      min={0}
-                      max={255}
-                      step={1}
-                      value={node.params.threshold}
-                      onChange={(e) =>
-                        updateNode(node.id, (n) =>
-                          n.type === "make_mask"
-                            ? { ...n, params: { ...n.params, threshold: Number(e.target.value) } }
-                            : n
-                        )
-                      }
-                    />
-                  </label>
-                  <label className="field inline-field">
-                    <input
-                      type="checkbox"
-                      checked={node.params.invert}
-                      onChange={(e) =>
-                        updateNode(node.id, (n) =>
-                          n.type === "make_mask"
-                            ? { ...n, params: { ...n.params, invert: e.target.checked } }
-                            : n
-                        )
-                      }
-                    />
-                    Invert
-                  </label>
-                </>
-              )}
-            </div>
+                      {node.type === "make_mask" && (
+                        <>
+                          <label className="field">
+                            Threshold: {node.params.threshold}
+                            <input
+                              type="range"
+                              min={0}
+                              max={255}
+                              step={1}
+                              value={node.params.threshold}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) =>
+                                  withMakeMaskThreshold(n, Number(e.target.value))
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="field inline-field">
+                            <input
+                              type="checkbox"
+                              checked={node.params.invert}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) => withMakeMaskInvert(n, e.target.checked))
+                              }
+                            />
+                            Invert
+                          </label>
+                        </>
+                      )}
+                    </div>
                   );
                 })}
               </div>
