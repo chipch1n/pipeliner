@@ -1,9 +1,26 @@
 services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pipeliner
+    ports:
+      - "5432:5432"
+
   backend:
     build:
       context: ./backend
     ports:
       - "8000:8000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: pipeliner
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      LOCKOUT_ALERT_EMAIL: admin@example.com
+      FIXED_SALT: "ThisIsAFixedSaltThatShouldBeSecret"
 
   frontend:
     build:

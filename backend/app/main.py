@@ -2,13 +2,18 @@ import io
 import json
 from typing import Any, Dict, FrozenSet, List, Tuple
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image
 from PIL.Image import DecompressionBombError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .nodes import create_node
+from .db import get_db, User
+from .utils import UserRegister, UserLogin, UserResponse, LogoutResponse
+from .auth import create_user, authenticate_user, create_session, delete_session, validate_session_token
 
 # Decompression bomb and memory exhaustion mitigations for uploaded images.
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB raw body per part (compressed on wire)
@@ -37,7 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.middleware("http")
 async def limit_request_body_hint(request: Request, call_next):
@@ -453,3 +457,55 @@ async def process_image(
     out_buffer.seek(0)
 
     return StreamingResponse(out_buffer, media_type="image/png")
+
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> int:
+    token = request.cookies.get("session_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_id = await validate_session_token(db, token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return user_id
+
+@app.post("/register", response_model=UserResponse, status_code=201)
+async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
+    user = await create_user(db, payload.username, payload.password)
+    if user is None:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    return {"message": "User registered successfully"}
+
+@app.post("/login", response_model=UserResponse)
+async def login(
+    payload: UserLogin,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await authenticate_user(db, payload.username, payload.password)
+    token = await create_session(db, user.id)
+    response.set_cookie(
+        key="session_token",
+        value=token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=3600 * 24 * 7,
+    )
+    return {"username": user.username}
+
+@app.post("/logout", response_model=LogoutResponse)
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    token = request.cookies.get("session_token")
+    if token is None:
+        raise HTTPException(status_code=400, detail="Already logged out")
+    else:
+        await delete_session(db, token)
+    response.delete_cookie("session_token")
+    return {"message": "Logged out successfully"}
+
+@app.get("/user-info")
+async def read_current_user(user_id: int = Depends(get_current_user)):
+    return {"user_id": user_id}

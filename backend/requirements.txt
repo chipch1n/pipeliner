@@ -3,3 +3,7 @@ uvicorn[standard]
 pillow
 numpy
 python-multipart
+asyncpg
+sqlalchemy[asyncio]
+aiosmtplib
+pydantic[email-validator]
