@@ -1,6 +1,9 @@
+import logging
 import os
 import aiosmtplib
 from email.message import EmailMessage
+
+logger = logging.getLogger("app.email")
 
 FIXED_RECIPIENT = os.getenv("LOCKOUT_ALERT_EMAIL", "admin@example.com")
 SMTP_CONFIG = {
@@ -13,6 +16,7 @@ SMTP_CONFIG = {
 
 async def send_lockout_alert(username: str) -> None:
     if not SMTP_CONFIG["username"] or not SMTP_CONFIG["password"]:
+        logger.warning("SMTP not configured, skipping lockout email about user: %s", username)
         return
 
     msg = EmailMessage()
@@ -23,11 +27,16 @@ async def send_lockout_alert(username: str) -> None:
         f"User '{username}' has been locked out for 10 minutes after 3 failed login attempts."
     )
 
-    await aiosmtplib.send(
-        msg,
-        hostname=SMTP_CONFIG["hostname"],
-        port=SMTP_CONFIG["port"],
-        username=SMTP_CONFIG["username"],
-        password=SMTP_CONFIG["password"],
-        use_tls=SMTP_CONFIG["use_tls"],
-    )
+    try:
+        await aiosmtplib.send(
+            msg,
+            hostname=SMTP_CONFIG["hostname"],
+            port=SMTP_CONFIG["port"],
+            username=SMTP_CONFIG["username"],
+            password=SMTP_CONFIG["password"],
+            use_tls=SMTP_CONFIG["use_tls"],
+        )
+    except Exception as exc:
+        logger.exception("Failed to send lockout email about user: %s", username, exc)
+
+    logger.info("Sent lockout email about user: %s", username)

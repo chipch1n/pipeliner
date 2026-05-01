@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 from typing import Any, Dict, FrozenSet, List, Tuple
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Depends, Response
@@ -32,6 +33,13 @@ _MAX_REQUEST_BODY_BYTES = _MAX_UPLOAD_BYTES + 1024 * 512
 _ALLOWED_PIL_FORMATS: FrozenSet[str] = frozenset({"JPEG", "PNG", "WEBP", "GIF"})
 # Hard cap on decoded pixel count (Pillow default is very high; keep explicit).
 Image.MAX_IMAGE_PIXELS = 32_000_000  # ~32 MP
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("app.main")
 
 app = FastAPI(title="Pipeliner API")
 
@@ -445,9 +453,18 @@ async def process_image(
             detail=f"Uploaded file exceeds maximum size ({_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB).",
         )
 
-    input_image = _open_validated_upload(raw, image)
+    try:
+        input_image = _open_validated_upload(raw, image)
+    except Exception as exc:
+        logger.warning("Pipeline validation failed", exc)
+        raise
 
-    final_image, node_outputs = process_pipeline(input_image, nodes, branch_sources_raw)
+    try:
+        final_image, node_outputs = process_pipeline(input_image, nodes, branch_sources_raw)
+    except Exception as exc:
+        logger.exception("Failed to process pipeline", exc)
+        raise
+
     output_image = final_image
     if preview_node_id:
         output_image = node_outputs.get(preview_node_id, final_image)
@@ -471,7 +488,9 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
     user = await create_user(db, payload.username, payload.password)
     if user is None:
+        logger.warning("Registration failed – username already exists: %s", payload.username)
         raise HTTPException(status_code=400, detail="Username already exists")
+    logger.info("User registered: username=%s id=%d", user.username, user.id)
     return {"message": "User registered successfully"}
 
 @app.post("/login", response_model=UserResponse)

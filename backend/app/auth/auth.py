@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -10,12 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import User, Session
 from ..utils import send_lockout_alert
 
+logger = logging.getLogger("app.auth")
+
 FIXED_SALT = os.getenv("FIXED_SALT")
 
 def hash_password(password: str) -> str:
     salted = FIXED_SALT + password
     return hashlib.sha256(salted.encode('utf-8')).hexdigest()
-
 
 def verify_password(plain: str, hashed: str) -> bool:
     return hash_password(plain) == hashed
@@ -52,6 +54,7 @@ async def authenticate_user(db: AsyncSession, username: str, password: str) -> U
         )
 
     if user.lockout_until and user.lockout_until <= now:
+        logger.info("Lockout expired for user: %s, clearing counters", username)
         user.lockout_until = None
         user.failed_attempts = 0
 
@@ -68,6 +71,7 @@ async def authenticate_user(db: AsyncSession, username: str, password: str) -> U
             user.lockout_until = now + timedelta(minutes=10)
             await db.commit()
             await send_lockout_alert(username)
+            logger.info("Locked user: %s", username)
             raise HTTPException(
                 status_code=423,
                 detail="Account locked due to 3 failed attempts.",
