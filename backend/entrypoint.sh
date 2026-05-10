@@ -1,14 +1,12 @@
 #!/bin/sh
 
-LIQUIBASE_URL="jdbc:postgresql://db:5432/pipeliner"
-LIQUIBASE_USER="postgres"
-LIQUIBASE_PASSWORD="postgres"
+LIQUIBASE_URL="jdbc:postgresql://$DB_HOST:$DB_PORT/$DB_NAME"
 
 echo "Running migration..."
 liquibase \
   --url="$LIQUIBASE_URL" \
-  --username="$LIQUIBASE_USER" \
-  --password="$LIQUIBASE_PASSWORD" \
+  --username="$DB_USER" \
+  --password="$DB_PASSWORD" \
   --driver=org.postgresql.Driver \
   --changelog-file=/app/liquibase/db.changelog-master.yaml \
   update

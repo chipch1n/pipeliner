@@ -475,12 +475,13 @@ async def process_image(
 
     return StreamingResponse(out_buffer, media_type="image/png")
 
-async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> int:
+async def get_current_user(request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> int:
     token = request.cookies.get("session_token")
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     user_id = await validate_session_token(db, token)
     if user_id is None:
+        response.delete_cookie("session_token")
         raise HTTPException(status_code=401, detail="Invalid or expired session")
     return user_id
 

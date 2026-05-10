@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 RUN apt-get update && \
-    apt-get install -y openjdk-21-jre-headless wget && \
+    apt-get install -y openjdk-21-jre-headless wget dos2unix && \
     rm -rf /var/lib/apt/lists/*
 
 ARG LIQUIBASE_VERSION=4.29.2
@@ -20,7 +20,7 @@ COPY app ./app
 COPY app/liquibase/changelog ./app/changelog
 COPY entrypoint.sh .
 
-RUN chmod +x entrypoint.sh
+RUN dos2unix entrypoint.sh && chmod +x entrypoint.sh
 
 EXPOSE 8000
 

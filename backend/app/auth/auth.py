@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import os
 import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -10,10 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import User, Session
 from ..utils import send_lockout_alert
+from ..utils.config_utils import required_env
 
 logger = logging.getLogger("app.auth")
 
-FIXED_SALT = os.getenv("FIXED_SALT")
+FIXED_SALT = required_env("FIXED_SALT")
 
 def hash_password(password: str) -> str:
     salted = FIXED_SALT + password
@@ -33,7 +33,6 @@ async def create_user(db: AsyncSession, username: str, password: str) -> Optiona
     )
     db.add(user)
     await db.commit()
-    await db.refresh(user)
     return user
 
 async def authenticate_user(db: AsyncSession, username: str, password: str) -> User:
@@ -96,7 +95,7 @@ async def delete_session(db: AsyncSession, token: str) -> bool:
     return result.rowcount > 0
 
 async def validate_session_token(db: AsyncSession, token: str) -> Optional[int]:
-    stmt = select(Session.user_id).where(Session.token == token)
+    stmt = select(Session.user_id).where(Session.token == token and Session.created_at < datetime.now() - timedelta(weeks=1))
     result = await db.execute(stmt)
     user_id = result.scalar_one_or_none()
     return user_id

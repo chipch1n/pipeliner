@@ -8,3 +8,4 @@ sqlalchemy[asyncio]
 aiosmtplib
 pydantic[email-validator]
 pytest-asyncio
+pytest-env

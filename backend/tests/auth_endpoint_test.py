@@ -13,7 +13,7 @@ from backend.app.main import (
     app,
     get_current_user,
 )
-from backend.tests.conftest import setup_mock_execute
+from backend.tests.util.db_util import setup_mock_execute
 
 mocked_db = AsyncMock(spec=AsyncSession)
 

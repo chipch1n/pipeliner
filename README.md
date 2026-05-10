@@ -36,20 +36,20 @@ Minimal web‑based image processing pipeline prototype with user authentication
 ## Environment variables
 All variables have sensible defaults for development. Adjust in `docker-compose.yml` or export before running locally.
 
-| Variable             | Default               | Description                                      |
-|----------------------|-----------------------|--------------------------------------------------|
-| `DB_HOST`            | `db`                  | PostgreSQL host                                  |
-| `DB_PORT`            | `5432`                | PostgreSQL port                                  |
-| `DB_NAME`            | `pipeliner`           | Database name                                    |
-| `DB_USER`            | `postgres`            | Database user                                    |
-| `DB_PASSWORD`        | `postgres`            | Database password                                |
-| `SMTP_HOST`          | `smtp.example.com`    | SMTP server for lockout alerts                   |
-| `SMTP_PORT`          | `587`                 | SMTP port                                        |
-| `SMTP_USER`          | (empty)               | SMTP authentication user                         |
-| `SMTP_PASSWORD`      | (empty)               | SMTP authentication password                     |
-| `SMTP_USE_TLS`       | `true`                | Enable TLS for SMTP                              |
-| `LOCKOUT_ALERT_EMAIL`| `admin@example.com`   | Recipient of lockout alert emails                |
-| `PASSWORD_SALT`      | `ThisIsAFixedSalt…`   | Fixed salt for SHA‑256 (change for production!)  |
+| Variable             | Default             | Description                                      |
+|----------------------|---------------------|--------------------------------------------------|
+| `DB_HOST`            | `db`                | PostgreSQL host                                  |
+| `DB_PORT`            | `5432`              | PostgreSQL port                                  |
+| `DB_NAME`            | `pipeliner`         | Database name                                    |
+| `DB_USER`            | `postgres`          | Database user                                    |
+| `DB_PASSWORD`        | `postgres`          | Database password                                |
+| `SMTP_HOST`          | `smtp.example.com`  | SMTP server for lockout alerts                   |
+| `SMTP_PORT`          | `587`               | SMTP port                                        |
+| `SMTP_USER`          | (empty)             | SMTP authentication user                         |
+| `SMTP_PASSWORD`      | (empty)             | SMTP authentication password                     |
+| `SMTP_USE_TLS`       | `true`              | Enable TLS for SMTP                              |
+| `LOCKOUT_ALERT_EMAIL`| `admin@example.com` | Recipient of lockout alert emails                |
+| `PASSWORD_SALT`      | (empty)             | Fixed salt for SHA‑256 (change for production!)  |
 
 ## Run with Docker
 ```bash
@@ -58,6 +58,8 @@ docker compose up --build
 
 Frontend: [http://localhost:5173](http://localhost:5173)  
 Backend: [http://localhost:8000](http://localhost:8000)
+
+Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are listed in docker compose file
 
 ## API
 `POST /process-image`

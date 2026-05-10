@@ -21,7 +21,7 @@ from backend.app.db import get_db
 from backend.app.main import (
     app,
 )
-from backend.tests.conftest import setup_mock_execute
+from backend.tests.util.db_util import setup_mock_execute
 
 mocked_db = AsyncMock(spec=AsyncSession)
 
@@ -77,7 +77,6 @@ class TestAuth:
         assert user.username == "newuser"
         mock_db.add.assert_called_once()
         mock_db.commit.assert_called()
-        mock_db.refresh.assert_called_once_with(user)
 
     @pytest.mark.asyncio
     async def test_create_user_existing(self, mock_db):
