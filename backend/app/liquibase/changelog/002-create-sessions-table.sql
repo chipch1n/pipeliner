@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS sessions (
+    id          SERIAL PRIMARY KEY,
+    token       VARCHAR(128) NOT NULL UNIQUE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

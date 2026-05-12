@@ -1,17 +1,23 @@
 import io
 import json
+import logging
 from typing import Any, Dict, FrozenSet, List, Tuple
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image
 from PIL.Image import DecompressionBombError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .nodes import create_node
+from .db import get_db, User
+from .utils import UserRegister, UserLogin, UserResponse, LogoutResponse
+from .auth import create_user, authenticate_user, create_session, delete_session, validate_session_token
 
 # Decompression bomb and memory exhaustion mitigations for uploaded images.
-_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB raw body per part (compressed on wire)
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB raw body per part (compressed on wire)
 # Declared multipart part types we accept before sniffing PIL format from headers only.
 _ALLOWED_PART_CONTENT_TYPES: FrozenSet[str] = frozenset(
     {"image/jpeg", "image/png", "image/webp", "image/gif", "application/octet-stream"}
@@ -23,10 +29,17 @@ _CONTENT_TYPE_TO_PIL: Dict[str, str] = {
     "image/gif": "GIF",
 }
 # Reject naive huge POST before buffering when Content-Length is known (multipart adds overhead).
-_MAX_REQUEST_BODY_BYTES = _MAX_UPLOAD_BYTES + 1024 * 512
+_MAX_REQUEST_BODY_BYTES = MAX_UPLOAD_BYTES + 1024 * 512
 _ALLOWED_PIL_FORMATS: FrozenSet[str] = frozenset({"JPEG", "PNG", "WEBP", "GIF"})
 # Hard cap on decoded pixel count (Pillow default is very high; keep explicit).
 Image.MAX_IMAGE_PIXELS = 32_000_000  # ~32 MP
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("app.main")
 
 app = FastAPI(title="Pipeliner API")
 
@@ -37,7 +50,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.middleware("http")
 async def limit_request_body_hint(request: Request, call_next):
@@ -64,19 +76,19 @@ async def limit_request_body_hint(request: Request, call_next):
     return await call_next(request)
 
 
-def _normalized_part_content_type(upload: UploadFile) -> str:
+def normalized_part_content_type(upload: UploadFile) -> str:
     ct = upload.content_type
     if not ct:
         return ""
     return ct.split(";")[0].strip().lower()
 
 
-def _open_validated_upload(raw: bytes, upload: UploadFile) -> Image.Image:
+def open_validated_upload(raw: bytes, upload: UploadFile) -> Image.Image:
     """Validate declared type, Pillow format sniff (headers), then decode once (MAX_IMAGE_PIXELS)."""
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    ct = _normalized_part_content_type(upload)
+    ct = normalized_part_content_type(upload)
     if ct and ct not in _ALLOWED_PART_CONTENT_TYPES:
         raise HTTPException(
             status_code=415,
@@ -129,11 +141,11 @@ def _open_validated_upload(raw: bytes, upload: UploadFile) -> Image.Image:
     return input_image
 
 
-def _resolve_node_id(node: Dict[str, Any], index: int) -> str:
+def resolve_node_id(node: Dict[str, Any], index: int) -> str:
     return str(node.get("id") or f"node-{index}")
 
 
-def _first_flat_index_for_branch(pipeline_nodes: List[Dict[str, Any]], branch: str) -> int:
+def first_flat_index_for_branch(pipeline_nodes: List[Dict[str, Any]], branch: str) -> int:
     b = str(branch).strip() or "main"
     for i, node in enumerate(pipeline_nodes):
         nb = str(node.get("branch", "main")).strip() or "main"
@@ -142,14 +154,14 @@ def _first_flat_index_for_branch(pipeline_nodes: List[Dict[str, Any]], branch: s
     return -1
 
 
-def _branches_in_pipeline(pipeline_nodes: List[Dict[str, Any]]) -> set[str]:
+def branches_in_pipeline(pipeline_nodes: List[Dict[str, Any]]) -> set[str]:
     out: set[str] = {"main"}
     for node in pipeline_nodes:
         out.add(str(node.get("branch", "main")).strip() or "main")
     return out
 
 
-def _mask_capable_node_ids(
+def mask_capable_node_ids(
     ordered_nodes: List[Dict[str, Any]],
     branch_sources: Dict[str, str] | None = None,
 ) -> set[str]:
@@ -165,7 +177,7 @@ def _mask_capable_node_ids(
         output_is_mask = str(node.get("type") or "") == "make_mask" or input_is_mask
         branch_is_mask[branch] = output_is_mask
         if output_is_mask:
-            ids.add(_resolve_node_id(node, index))
+            ids.add(resolve_node_id(node, index))
     return ids
 
 
@@ -179,7 +191,7 @@ def order_pipeline_nodes(
     if n == 0:
         return []
 
-    node_ids = [_resolve_node_id(pipeline_nodes[i], i) for i in range(n)]
+    node_ids = [resolve_node_id(pipeline_nodes[i], i) for i in range(n)]
     seen: set[str] = set()
     for nid in node_ids:
         if nid in seen:
@@ -225,7 +237,7 @@ def order_pipeline_nodes(
         add_edge(provider_index, consumer_index)
 
     src_map = branch_sources or {}
-    for branch in _branches_in_pipeline(pipeline_nodes):
+    for branch in branches_in_pipeline(pipeline_nodes):
         if branch == "main":
             continue
         raw = src_map.get(branch)
@@ -237,7 +249,7 @@ def order_pipeline_nodes(
             continue
         if entry not in id_to_index:
             continue
-        first_idx = _first_flat_index_for_branch(pipeline_nodes, branch)
+        first_idx = first_flat_index_for_branch(pipeline_nodes, branch)
         if first_idx < 0:
             continue
         provider_index = id_to_index[entry]
@@ -264,7 +276,7 @@ def order_pipeline_nodes(
     if not validate_mask_providers:
         return ordered
 
-    mask_capable = _mask_capable_node_ids(ordered, branch_sources)
+    mask_capable = mask_capable_node_ids(ordered, branch_sources)
     for consumer_index, node in enumerate(ordered):
         params = node.get("params") or {}
         mask_ref = params.get("maskNodeId")
@@ -275,20 +287,20 @@ def order_pipeline_nodes(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f'Node "{_resolve_node_id(node, consumer_index)}" references a non-mask output '
+                    f'Node "{resolve_node_id(node, consumer_index)}" references a non-mask output '
                     f'("{mask_key}"). Start from make_mask or from a branch forked from a mask output.'
                 ),
             )
     return ordered
 
 
-def _validate_branch_sources(
+def validate_branch_sources(
     pipeline_nodes: List[Dict[str, Any]],
     branch_sources_raw: Dict[str, Any],
 ) -> Dict[str, str]:
     """Resolve per-branch entry: 'original' or a node id. Unknown ids fall back to 'original'."""
     n = len(pipeline_nodes)
-    id_to_index = {_resolve_node_id(pipeline_nodes[i], i): i for i in range(n)}
+    id_to_index = {resolve_node_id(pipeline_nodes[i], i): i for i in range(n)}
 
     branches_present: set[str] = set()
     for node in pipeline_nodes:
@@ -334,11 +346,11 @@ def run_pipeline_pass(
     branch_is_mask: Dict[str, bool] = {"main": False}
     node_id_to_type: Dict[str, str] = {}
     for idx, pn in enumerate(pipeline_nodes):
-        nid = _resolve_node_id(pn, idx)
+        nid = resolve_node_id(pn, idx)
         node_id_to_type[nid] = str(pn.get("type") or "")
 
     for index, node in enumerate(pipeline_nodes):
-        node_id = _resolve_node_id(node, index)
+        node_id = resolve_node_id(node, index)
         node_type = node.get("type")
         params = node.get("params", {})
         branch = str(node.get("branch", "main")).strip() or "main"
@@ -412,7 +424,7 @@ def process_pipeline(
     pipeline_nodes: List[Dict[str, Any]],
     branch_sources_raw: Dict[str, Any] | None = None,
 ) -> Tuple[Image.Image, Dict[str, Image.Image]]:
-    resolved_sources = _validate_branch_sources(pipeline_nodes, branch_sources_raw or {})
+    resolved_sources = validate_branch_sources(pipeline_nodes, branch_sources_raw or {})
     ordered = order_pipeline_nodes(pipeline_nodes, resolved_sources)
     return run_pipeline_pass(image=image, pipeline_nodes=ordered, branch_sources=resolved_sources)
 
@@ -434,16 +446,25 @@ async def process_image(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid pipeline payload: {exc}") from exc
 
-    raw = await image.read(_MAX_UPLOAD_BYTES + 1)
-    if len(raw) > _MAX_UPLOAD_BYTES:
+    raw = await image.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"Uploaded file exceeds maximum size ({_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB).",
+            detail=f"Uploaded file exceeds maximum size ({MAX_UPLOAD_BYTES // (1024 * 1024)} MiB).",
         )
 
-    input_image = _open_validated_upload(raw, image)
+    try:
+        input_image = open_validated_upload(raw, image)
+    except Exception as exc:
+        logger.warning("Pipeline validation failed", exc)
+        raise
 
-    final_image, node_outputs = process_pipeline(input_image, nodes, branch_sources_raw)
+    try:
+        final_image, node_outputs = process_pipeline(input_image, nodes, branch_sources_raw)
+    except Exception as exc:
+        logger.exception("Failed to process pipeline", exc)
+        raise
+
     output_image = final_image
     if preview_node_id:
         output_image = node_outputs.get(preview_node_id, final_image)
@@ -453,3 +474,58 @@ async def process_image(
     out_buffer.seek(0)
 
     return StreamingResponse(out_buffer, media_type="image/png")
+
+async def get_current_user(request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> int:
+    token = request.cookies.get("session_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_id = await validate_session_token(db, token)
+    if user_id is None:
+        response.delete_cookie("session_token")
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return user_id
+
+@app.post("/register", response_model=UserResponse, status_code=201)
+async def register(payload: UserRegister, db: AsyncSession = Depends(get_db)):
+    user = await create_user(db, payload.username, payload.password)
+    if user is None:
+        logger.warning("Registration failed – username already exists: %s", payload.username)
+        raise HTTPException(status_code=400, detail="Username already exists")
+    logger.info("User registered: username=%s id=%d", user.username, user.id)
+    return {"username": user.username}
+
+@app.post("/login", response_model=UserResponse)
+async def login(
+    payload: UserLogin,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await authenticate_user(db, payload.username, payload.password)
+    token = await create_session(db, user.id)
+    response.set_cookie(
+        key="session_token",
+        value=token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=3600 * 24 * 7,
+    )
+    return {"username": user.username}
+
+@app.post("/logout", response_model=LogoutResponse)
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    token = request.cookies.get("session_token")
+    if token is None:
+        raise HTTPException(status_code=400, detail="Already logged out")
+    else:
+        await delete_session(db, token)
+    response.delete_cookie("session_token")
+    return {"message": "Logged out successfully"}
+
+@app.get("/user-info")
+async def read_current_user(user_id: int = Depends(get_current_user)):
+    return {"user_id": user_id}

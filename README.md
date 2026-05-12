@@ -1,19 +1,55 @@
 # Pipeliner MVP
 
-Minimal web-based image processing pipeline prototype.
+Minimal web‑based image processing pipeline prototype with user authentication.
 
 ## Stack
-- Frontend: React + TypeScript + Vite
-- Backend: FastAPI + Pillow + NumPy
+- **Frontend:** React + TypeScript + Vite
+- **Backend:** FastAPI + Pillow + NumPy
+- **Database:** PostgreSQL (via SQLAlchemy async + asyncpg)
+- **Migrations:** Liquibase
+- **Authentication:** SHA‑256 hashed passwords (fixed salt), cookie‑based sessions
+- **Email:** aiosmtplib (lockout alerts)
 
 ## Features
-- Upload image
-- Add/remove/reorder linear nodes
+### Image processing
+- Upload an image
+- Add/remove/reorder linear processing nodes
 - Blur node (radius parameter)
 - Noise node (intensity parameter)
 - Process image through pipeline order
-- Side-by-side original/processed preview
+- Side‑by‑side original/processed preview
 - Download processed image
+
+### User management
+- Registration (`POST /register`) – stores username + hashed password
+- Login (`POST /login`) – validates credentials, sets secure session cookie
+- Session‑based protected endpoints (e.g., `GET /me`)
+- Logout (`POST /logout`) – clears session
+- Account lockout after 3 failed login attempts (10‑minute lock)
+- Email notification on lockout to a fixed address
+
+## Prerequisites
+- Docker & Docker Compose (for containerised run)
+- Or Python 3.11+ and Node.js 18+ (for local development)
+- PostgreSQL instance (provided by Docker Compose or external)
+
+## Environment variables
+All variables have sensible defaults for development. Adjust in `docker-compose.yml` or export before running locally.
+
+| Variable             | Default             | Description                                      |
+|----------------------|---------------------|--------------------------------------------------|
+| `DB_HOST`            | `db`                | PostgreSQL host                                  |
+| `DB_PORT`            | `5432`              | PostgreSQL port                                  |
+| `DB_NAME`            | `pipeliner`         | Database name                                    |
+| `DB_USER`            | `postgres`          | Database user                                    |
+| `DB_PASSWORD`        | `postgres`          | Database password                                |
+| `SMTP_HOST`          | `smtp.example.com`  | SMTP server for lockout alerts                   |
+| `SMTP_PORT`          | `587`               | SMTP port                                        |
+| `SMTP_USER`          | (empty)             | SMTP authentication user                         |
+| `SMTP_PASSWORD`      | (empty)             | SMTP authentication password                     |
+| `SMTP_USE_TLS`       | `true`              | Enable TLS for SMTP                              |
+| `LOCKOUT_ALERT_EMAIL`| `admin@example.com` | Recipient of lockout alert emails                |
+| `PASSWORD_SALT`      | (empty)             | Fixed salt for SHA‑256 (change for production!)  |
 
 ## Run with Docker
 ```bash
@@ -23,27 +59,14 @@ docker compose up --build
 Frontend: [http://localhost:5173](http://localhost:5173)  
 Backend: [http://localhost:8000](http://localhost:8000)
 
-## Run without Docker
-
-Backend:
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Frontend:
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are listed in docker compose file
 
 ## API
 `POST /process-image`
 
 Multipart fields:
 - `image`: image file
+- `preview_node_id` (optional): specified final node 
 - `pipeline`: JSON string like:
 
 ```json
@@ -54,3 +77,38 @@ Multipart fields:
   ]
 }
 ```
+
+`POST /register`
+
+Request:
+- `username`: string, 3–255 characters
+- `password`: string, 6–128 characters
+
+Ok (201): user registered successfully.\
+Error (400): username already exists.
+
+`POST /login`
+
+Request:
+- `username`: string
+- `password`: string
+
+Response:
+`{"username": "username"}`
+
+Ok (200): login successful, set session cookie.\
+Error (401): invalid credentials.\
+Error (423): user locked out.
+
+`POST /logout`
+
+Ok (200): clears session cookie and deletes session from db.
+Error (400): no session.
+
+`GET /user-info`
+
+Response:
+`{"user_id": "user_id"}`
+
+Ok (200): returns user id from current session.
+Error (401): invalid or no session.
