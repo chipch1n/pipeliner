@@ -1,3 +1,5 @@
+from typing import List, Dict, Any
+
 from pydantic import BaseModel, Field
 
 class UserRegister(BaseModel):
@@ -13,3 +15,16 @@ class UserResponse(BaseModel):
 
 class LogoutResponse(BaseModel):
     message: str
+
+class PipelineSave(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    nodes: List[Dict[str, Any]]
+
+class PipelineResponse(BaseModel):
+    id: int
+    name: str
+    pipeline_data: Dict[str, Any]
+
+class PipelineListItem(BaseModel):
+    id: int
+    name: str

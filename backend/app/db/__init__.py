@@ -1,5 +1,5 @@
 from .database import engine, async_session, get_db
-from .models import Base, User, Session
+from .models import Base, User, Session, Pipeline
 
 __all__ = [
     "engine",
@@ -8,4 +8,5 @@ __all__ = [
     "Base",
     "User",
     "Session",
+    "Pipeline",
 ]
