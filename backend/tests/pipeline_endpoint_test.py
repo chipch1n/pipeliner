@@ -38,6 +38,11 @@ class TestSavePipeline:
 
         setup_mock_execute(mock_db, None)
 
+        def add_side_effect(pipeline):
+            pipeline.id = 123
+
+        mock_db.add.side_effect = add_side_effect
+
         payload = {
             "name": "my_pipeline",
             "nodes": [
@@ -48,7 +53,7 @@ class TestSavePipeline:
         response = test_client.post("/pipelines", json=payload)
 
         assert response.status_code == 201
-        assert response.json()["id"] is None
+        assert response.json()["id"] == 123
 
         mock_db.add.assert_called_once()
         mock_db.commit.assert_called()
