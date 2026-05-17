@@ -61,6 +61,15 @@ Backend: [http://localhost:8000](http://localhost:8000)
 
 Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are listed in docker compose file
 
+## Testing
+
+### Backend
+
+To run tests, first pip install everything from requirements.txt, then run the following from project root:
+```bash
+python -m pytest ./backend/tests/
+```
+
 ## API
 `POST /process-image`
 
