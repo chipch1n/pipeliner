@@ -123,7 +123,7 @@ Request body (JSON):
 - `nodes`: array of node objects (same structure as /process-image)
 
 Created (201): \
-{ "message": "Pipeline saved successfully", "id": 123 }
+{ "id": 123 }
 
 If a pipeline with the same name exists, it is updated: \
 { "message": "Pipeline updated successfully", "id": 123 }
@@ -136,9 +136,7 @@ Ok (200): \
 `{
   "id": 123,
   "name": "my-pipeline",
-  "pipeline_data": { "nodes": [...] },
-  "created_at": "2026-05-11T10:00:00+00:00",
-  "updated_at": "2026-05-11T12:00:00+00:00"
+  "pipeline_data": { "nodes": [...]  }
 }`
 
 Error (404): pipeline not found.
@@ -149,8 +147,8 @@ Requires authentication cookie. Lists all user's pipelines ordered by last updat
 
 Ok (200): \
 `[
-  { "id": 2, "name": "recent-pipeline", "created_at": "...", "updated_at": "..." },
-  { "id": 1, "name": "my-pipeline", "created_at": "...", "updated_at": "..." }
+  { "id": 2, "name": "recent-pipeline" },
+  { "id": 1, "name": "my-pipeline" }
 ]`
 
 `DELETE /pipelines/{name}`
