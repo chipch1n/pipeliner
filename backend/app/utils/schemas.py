@@ -19,6 +19,7 @@ class LogoutResponse(BaseModel):
 class PipelineSave(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     nodes: List[Dict[str, Any]]
+    branchSources: Dict[str, str] | None = None
 
 class PipelineResponse(BaseModel):
     id: int

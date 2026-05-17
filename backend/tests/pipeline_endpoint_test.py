@@ -84,7 +84,8 @@ class TestSavePipeline:
             "name": "my_pipeline",
             "nodes": [
                 {"id": "noise1", "type": "noise", "params": {"intensity": 30}}
-            ]
+            ],
+            "branchSources": {"main": "original"}
         }
 
         response = test_client.post("/pipelines", json=payload)
@@ -92,7 +93,7 @@ class TestSavePipeline:
         assert response.status_code == 201
         assert response.json()["id"] == 42
 
-        assert existing_pipeline.pipeline_data == {"nodes": payload["nodes"]}
+        assert existing_pipeline.pipeline_data == {"nodes": payload["nodes"], "branch_sources": payload["branchSources"]}
         mock_db.commit.assert_called()
 
     def test_save_pipeline_unauthorized(self, test_client):

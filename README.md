@@ -136,7 +136,7 @@ Ok (200): \
 `{
   "id": 123,
   "name": "my-pipeline",
-  "pipeline_data": { "nodes": [...]  }
+  "pipeline_data": { "nodes": [...], "branch_sources": {"main": "original", "side": "main"} }
 }`
 
 Error (404): pipeline not found.

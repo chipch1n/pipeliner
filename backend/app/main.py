@@ -543,7 +543,7 @@ async def save_pipeline(
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
 
-    pipeline_data = {"nodes": payload.nodes}
+    pipeline_data = {"nodes": payload.nodes, "branch_sources": payload.branchSources or {}}
 
     if existing:
         existing.pipeline_data = pipeline_data
