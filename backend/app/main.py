@@ -8,12 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image
 from PIL.Image import DecompressionBombError
-from sqlalchemy import select
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .nodes import create_node
-from .db import get_db, User
-from .utils import UserRegister, UserLogin, UserResponse, LogoutResponse
+from .db import get_db, User, Pipeline
+from .utils import UserRegister, UserLogin, UserResponse, LogoutResponse, PipelineListItem, PipelineResponse, \
+    PipelineSave
 from .auth import create_user, authenticate_user, create_session, delete_session, validate_session_token
 
 # Decompression bomb and memory exhaustion mitigations for uploaded images.
@@ -529,3 +530,124 @@ async def logout(
 @app.get("/user-info")
 async def read_current_user(user_id: int = Depends(get_current_user)):
     return {"user_id": user_id}
+
+@app.post("/pipelines", response_model=dict, status_code=201)
+async def save_pipeline(
+    payload: PipelineSave,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Pipeline).where(
+        and_(Pipeline.user_id == user_id, Pipeline.name == payload.name)
+    )
+    result = await db.execute(stmt)
+    existing = result.scalar_one_or_none()
+
+    pipeline_data = {"nodes": payload.nodes, "branch_sources": payload.branchSources or {}}
+
+    if existing:
+        existing.pipeline_data = pipeline_data
+        existing.updated_at = func.now()
+        await db.commit()
+
+        logger.info(
+            "Pipeline updated: user_id=%d pipeline_name=%s pipeline_id=%d",
+            user_id,
+            payload.name,
+            existing.id,
+        )
+
+        return {
+            "id": existing.id,
+        }
+    else:
+        new_pipeline = Pipeline(
+            user_id=user_id,
+            name=payload.name,
+            pipeline_data=pipeline_data,
+        )
+        db.add(new_pipeline)
+        await db.commit()
+
+        logger.info(
+            "Pipeline created: user_id=%d pipeline_name=%s pipeline_id=%d",
+            user_id,
+            payload.name,
+            new_pipeline.id,
+        )
+
+        return {
+            "id": new_pipeline.id,
+        }
+
+
+@app.get("/pipelines/{name}", response_model=PipelineResponse)
+async def get_pipeline(
+    name: str,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Pipeline).where(
+        and_(Pipeline.user_id == user_id, Pipeline.name == name)
+    )
+    result = await db.execute(stmt)
+    pipeline = result.scalar_one_or_none()
+
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    return PipelineResponse(
+        id=pipeline.id,
+        name=pipeline.name,
+        pipeline_data=pipeline.pipeline_data,
+    )
+
+
+@app.get("/pipelines", response_model=List[PipelineListItem])
+async def list_pipelines(
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Pipeline)
+        .where(Pipeline.user_id == user_id)
+        .order_by(Pipeline.updated_at.desc())
+    )
+    result = await db.execute(stmt)
+    pipelines = result.scalars().all()
+
+    return [
+        PipelineListItem(
+            id=p.id,
+            name=p.name,
+        )
+        for p in pipelines
+    ]
+
+
+@app.delete("/pipelines/{name}", status_code=200)
+async def delete_pipeline(
+    name: str,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Pipeline).where(
+        and_(Pipeline.user_id == user_id, Pipeline.name == name)
+    )
+    result = await db.execute(stmt)
+    pipeline = result.scalar_one_or_none()
+
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    await db.delete(pipeline)
+    await db.commit()
+
+    logger.info(
+        "Pipeline deleted: user_id=%d pipeline_name=%s pipeline_id=%d",
+        user_id,
+        name,
+        pipeline.id,
+    )
+
+    return {"message": "Pipeline deleted successfully"}

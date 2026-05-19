@@ -61,6 +61,15 @@ Backend: [http://localhost:8000](http://localhost:8000)
 
 Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are listed in docker compose file
 
+## Testing
+
+### Backend
+
+To run tests, first pip install everything from requirements.txt, then run the following from project root:
+```bash
+python -m pytest ./backend/tests/
+```
+
 ## API
 `POST /process-image`
 
@@ -112,3 +121,49 @@ Response:
 
 Ok (200): returns user id from current session.
 Error (401): invalid or no session.
+
+`POST /pipelines`
+
+Requires authentication cookie.
+
+Request body (JSON):
+
+- `name`: string, 1–255 characters (pipeline name)
+- `nodes`: array of node objects (same structure as /process-image)
+
+Created (201): \
+{ "id": 123 }
+
+If a pipeline with the same name exists, it is updated: \
+{ "message": "Pipeline updated successfully", "id": 123 }
+
+`GET /pipelines/{name}`
+
+Requires authentication cookie.
+
+Ok (200): \
+`{
+  "id": 123,
+  "name": "my-pipeline",
+  "pipeline_data": { "nodes": [...], "branch_sources": {"main": "original", "side": "main"} }
+}`
+
+Error (404): pipeline not found.
+
+`GET /pipelines`
+
+Requires authentication cookie. Lists all user's pipelines ordered by last update.
+
+Ok (200): \
+`[
+  { "id": 2, "name": "recent-pipeline" },
+  { "id": 1, "name": "my-pipeline" }
+]`
+
+`DELETE /pipelines/{name}`
+
+Requires authentication cookie.
+
+Ok (200): { "message": "Pipeline deleted successfully" }
+
+Error (404): pipeline not found.
