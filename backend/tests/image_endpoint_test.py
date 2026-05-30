@@ -72,3 +72,98 @@ class TestProcessImageEndpoint:
         response = test_client.post("/process-image", files=files, data=data)
 
         assert response.status_code == 413
+
+    def test_skip_node_types_skips_hf_inference(self, test_client):
+        img = Image.new("RGB", (32, 32), color=(0, 0, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        pipeline = {
+            "nodes": [
+                {
+                    "id": "hf",
+                    "type": "hf_image_to_image",
+                    "params": {"model": "x/y", "debug": True},
+                }
+            ]
+        }
+        files = {"image": ("test.png", image_bytes, "image/png")}
+        data = {
+            "pipeline": json.dumps(pipeline),
+            "skip_node_types": json.dumps(["hf_image_to_image"]),
+        }
+
+        response = test_client.post("/process-image", files=files, data=data)
+
+        assert response.status_code == 200
+        result = Image.open(io.BytesIO(response.content))
+        assert result.getpixel((0, 0)) == (0, 0, 255)
+
+    def test_cached_output_multipart_used_when_hf_skipped(self, test_client, test_image_bytes):
+        cached = Image.new("RGB", (10, 10), color=(0, 255, 0))
+        cached_buf = io.BytesIO()
+        cached.save(cached_buf, format="PNG")
+        cached_bytes = cached_buf.getvalue()
+
+        pipeline = {
+            "nodes": [
+                {"id": "blur", "type": "blur", "params": {"radius": 5}},
+                {"id": "hf", "type": "hf_image_to_image", "params": {"model": "x/y", "debug": True}},
+                {"id": "noise", "type": "noise", "params": {"intensity": 100, "seed": 1}},
+            ]
+        }
+        files = {
+            "image": ("test.png", test_image_bytes, "image/png"),
+            "cached_output:hf": ("hf.png", cached_bytes, "image/png"),
+        }
+        data = {
+            "pipeline": json.dumps(pipeline),
+            "skip_node_types": json.dumps(["hf_image_to_image"]),
+        }
+
+        response = test_client.post("/process-image", files=files, data=data)
+
+        assert response.status_code == 200
+        without_cache = test_client.post(
+            "/process-image",
+            files={"image": ("test.png", test_image_bytes, "image/png")},
+            data={
+                "pipeline": json.dumps(pipeline),
+                "skip_node_types": json.dumps(["hf_image_to_image"]),
+            },
+        )
+        assert without_cache.status_code == 200
+        assert response.content != without_cache.content
+
+    def test_invalid_skip_node_types_returns_400(self, test_client, test_image_bytes):
+        files = {"image": ("test.png", test_image_bytes, "image/png")}
+        data = {
+            "pipeline": json.dumps({"nodes": []}),
+            "skip_node_types": "not-json",
+        }
+
+        response = test_client.post("/process-image", files=files, data=data)
+
+        assert response.status_code == 400
+        assert "skip_node_types" in response.json()["detail"]
+
+    def test_invalid_cached_output_returns_400(self, test_client, test_image_bytes):
+        pipeline = {
+            "nodes": [
+                {"id": "hf", "type": "hf_image_to_image", "params": {"model": "x/y", "debug": True}},
+            ]
+        }
+        files = {
+            "image": ("test.png", test_image_bytes, "image/png"),
+            "cached_output:hf": ("hf.bin", b"not-an-image", "application/octet-stream"),
+        }
+        data = {
+            "pipeline": json.dumps(pipeline),
+            "skip_node_types": json.dumps(["hf_image_to_image"]),
+        }
+
+        response = test_client.post("/process-image", files=files, data=data)
+
+        assert response.status_code == 400
+        assert "cached_output:hf" in response.json()["detail"]

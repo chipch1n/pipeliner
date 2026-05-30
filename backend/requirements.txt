@@ -1,4 +1,5 @@
 fastapi
+python-dotenv
 uvicorn[standard]
 pillow
 numpy
@@ -9,3 +10,4 @@ aiosmtplib
 pydantic[email-validator]
 pytest-asyncio
 pytest-env
+huggingface_hub>=0.26.0
