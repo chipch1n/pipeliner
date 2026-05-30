@@ -216,6 +216,55 @@ body {
   flex-direction: column;
   gap: 8px;
   background: #fcfcfc;
+  position: relative;
+}
+
+.node-card-running {
+  border-color: #6b8cff;
+  box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.25);
+  animation: hf-card-pulse 1.4s ease-in-out infinite;
+}
+
+.node-card-debug {
+  border-color: #e8a030;
+  background: #fffaf0;
+}
+
+@keyframes hf-card-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(107, 140, 255, 0.35);
+  }
+}
+
+.hf-run-button {
+  width: 100%;
+  min-width: 0;
+}
+
+.hf-run-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.hf-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(17, 17, 17, 0.15);
+  border-top-color: #111;
+  border-radius: 50%;
+  animation: hf-spin 0.7s linear infinite;
+}
+
+@keyframes hf-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .node-head {

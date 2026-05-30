@@ -6,6 +6,7 @@ from backend.app.nodes.base import BaseNode
 from backend.app.nodes.blur import BlurNode
 from backend.app.nodes.noise import NoiseNode
 from backend.app.nodes.make_mask import MakeMaskNode
+from backend.app.nodes.hf_image_to_image import HfImageToImageNode
 from backend.app.nodes.factory import create_node, NODE_REGISTRY
 
 @pytest.fixture
@@ -320,11 +321,17 @@ class TestNodeFactory:
         with pytest.raises(ValueError):
             create_node("Blur", {})
 
+    def test_create_hf_image_to_image_node(self):
+        node = create_node("hf_image_to_image", {"model": "timbrooks/instruct-pix2pix"})
+        assert isinstance(node, HfImageToImageNode)
+        assert node.params["model"] == "timbrooks/instruct-pix2pix"
+
     def test_registry_completeness(self):
         assert NODE_REGISTRY == {
             "blur": BlurNode,
             "noise": NoiseNode,
             "make_mask": MakeMaskNode,
+            "hf_image_to_image": HfImageToImageNode,
         }
 
     def test_factory_nodes_are_functional(self, gradient_image):

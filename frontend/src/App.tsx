@@ -18,6 +18,16 @@ import {
   withBlurRadius,
   withMakeMaskInvert,
   withMakeMaskThreshold,
+  withHfModel,
+  withHfPrompt,
+  withHfProvider,
+  withHfMask,
+  withHfDebug,
+  hfNodeIsDebug,
+  shouldSkipHfNodes,
+  getCachedNodeOutputBlobs,
+  hfCacheSignature,
+  type HfOutputCacheEntry,
   withNoiseIntensity,
   withNoiseMask,
   withNoiseSeed
@@ -34,22 +44,89 @@ export default function App() {
   const [showNodePicker, setShowNodePicker] = useState(false);
   const [previewNodeId, setPreviewNodeId] = useState<string>("final");
   const [branchSources, setBranchSources] = useState<BranchSources>({});
+  const [runningHfNodeId, setRunningHfNodeId] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
+  const previewNodeIdRef = useRef(previewNodeId);
+  const processGenerationRef = useRef(0);
+  const hfOutputCacheRef = useRef<Map<string, HfOutputCacheEntry>>(new Map());
+
+  previewNodeIdRef.current = previewNodeId;
+
+  const isUrlInHfCache = (url: string | null) => {
+    if (!url) return false;
+    for (const entry of hfOutputCacheRef.current.values()) {
+      if (entry.url === url) return true;
+    }
+    return false;
+  };
+
+  const revokeHfCacheEntry = (nodeId: string) => {
+    const entry = hfOutputCacheRef.current.get(nodeId);
+    if (entry) {
+      URL.revokeObjectURL(entry.url);
+      hfOutputCacheRef.current.delete(nodeId);
+    }
+  };
+
+  const clearHfOutputCache = () => {
+    for (const nodeId of hfOutputCacheRef.current.keys()) revokeHfCacheEntry(nodeId);
+  };
+
+  const storeHfCache = (hfNodeId: string, url: string, blob: Blob, branches: string[]) => {
+    const signature = hfCacheSignature(hfNodeId, nodes, branchSources, branches);
+    if (!signature) return;
+    const existing = hfOutputCacheRef.current.get(hfNodeId);
+    if (existing && existing.url !== url) revokeHfCacheEntry(hfNodeId);
+    hfOutputCacheRef.current.set(hfNodeId, { url, signature, blob });
+  };
+
+  const invalidateStaleHfCache = (branches: string[]) => {
+    for (const nodeId of [...hfOutputCacheRef.current.keys()]) {
+      const entry = hfOutputCacheRef.current.get(nodeId);
+      if (!entry) continue;
+      const signature = hfCacheSignature(nodeId, nodes, branchSources, branches);
+      if (!signature || signature !== entry.signature) revokeHfCacheEntry(nodeId);
+    }
+  };
+
+  const getValidHfCacheUrl = (hfNodeId: string, branches: string[]): string | null => {
+    const entry = hfOutputCacheRef.current.get(hfNodeId);
+    if (!entry) return null;
+    const signature = hfCacheSignature(hfNodeId, nodes, branchSources, branches);
+    if (!signature || entry.signature !== signature) {
+      revokeHfCacheEntry(hfNodeId);
+      return null;
+    }
+    return entry.url;
+  };
+
+  const clearAutoProcessTimer = () => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
 
   const canDownload = useMemo(() => Boolean(processedUrl), [processedUrl]);
 
   useEffect(() => {
     return () => {
-      if (originalUrl) URL.revokeObjectURL(originalUrl);
-      if (processedUrl) URL.revokeObjectURL(processedUrl);
       if (timerRef.current) window.clearTimeout(timerRef.current);
+      clearHfOutputCache();
     };
-  }, [originalUrl, processedUrl]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (originalUrl) URL.revokeObjectURL(originalUrl);
+    };
+  }, [originalUrl]);
 
   const onUpload = (file: File | null) => {
     if (!file) return;
     if (originalUrl) URL.revokeObjectURL(originalUrl);
-    if (processedUrl) URL.revokeObjectURL(processedUrl);
+    if (processedUrl && !isUrlInHfCache(processedUrl)) URL.revokeObjectURL(processedUrl);
+    clearHfOutputCache();
     const fileUrl = URL.createObjectURL(file);
     setUploadedFile(file);
     setOriginalUrl(fileUrl);
@@ -62,6 +139,7 @@ export default function App() {
   };
 
   const removeNode = (id: string) => {
+    revokeHfCacheEntry(id);
     setNodes((prev) => removeNodeFromList(prev, id));
   };
 
@@ -77,7 +155,7 @@ export default function App() {
   const maskPickerByNodeId = useMemo(() => {
     const map = new Map<string, { id: string; label: string }[]>();
     for (const n of nodes) {
-      if (n.type === "blur" || n.type === "noise") {
+      if (n.type === "blur" || n.type === "noise" || n.type === "hf_image_to_image") {
         map.set(n.id, maskSourceOptionsForConsumer(nodes, n.id, branchSources));
       }
     }
@@ -129,38 +207,109 @@ export default function App() {
 
   const nodesByBranch = useMemo(() => nodesByBranchGroups(nodes), [nodes]);
 
-  const processImage = async () => {
+  const processImage = async (options?: {
+    skipHf?: boolean;
+    previewId?: string;
+    hfNodeId?: string;
+    manual?: boolean;
+    updatePreview?: boolean;
+  }) => {
     if (!uploadedFile) return;
 
+    const manual = options?.manual ?? false;
+    if (manual) clearAutoProcessTimer();
+
+    const skipHf = options?.skipHf ?? shouldSkipHfNodes(nodes);
+    const previewId = options?.previewId ?? previewNodeIdRef.current;
+    const hfNodeId = options?.hfNodeId ?? null;
+
+    const previewHfNode = nodes.find(
+      (n) => n.id === previewId && n.type === "hf_image_to_image"
+    );
+    // Only short-circuit for explicit per-node preview (V button), not auto "final" preview.
+    if (skipHf && previewId !== "final" && previewHfNode) {
+      const cachedUrl = getValidHfCacheUrl(previewId, knownBranches);
+      if (cachedUrl) {
+        setProcessedUrl((prev) => {
+          if (prev && prev !== cachedUrl && !isUrlInHfCache(prev)) URL.revokeObjectURL(prev);
+          return cachedUrl;
+        });
+        return;
+      }
+    }
+
+    const generation = ++processGenerationRef.current;
+
     setIsProcessing(true);
+    if (hfNodeId) setRunningHfNodeId(hfNodeId);
     setError(null);
 
     try {
+      if (skipHf) invalidateStaleHfCache(knownBranches);
+
+      const cachedNodeOutputs =
+        skipHf && hfOutputCacheRef.current.size > 0
+          ? getCachedNodeOutputBlobs(hfOutputCacheRef.current)
+          : new Map<string, Blob>();
+
       const blob = await fetchProcessedImageBlob(
         DEFAULT_PROCESS_API_URL,
         uploadedFile,
         nodes,
-        previewNodeId,
+        previewId,
         branchSources,
-        knownBranches
+        knownBranches,
+        skipHf ? ["hf_image_to_image"] : [],
+        cachedNodeOutputs
       );
+      if (generation !== processGenerationRef.current) return;
+
       const url = URL.createObjectURL(blob);
-      if (processedUrl) URL.revokeObjectURL(processedUrl);
-      setProcessedUrl(url);
+      setProcessedUrl((prev) => {
+        if (prev && prev !== url && !isUrlInHfCache(prev)) URL.revokeObjectURL(prev);
+        return url;
+      });
+      if (!skipHf && hfNodeId) {
+        storeHfCache(hfNodeId, url, blob, knownBranches);
+      }
+      if (options?.previewId && options?.updatePreview !== false) {
+        setPreviewNodeId(options.previewId);
+      }
     } catch (err) {
+      if (generation !== processGenerationRef.current) return;
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setIsProcessing(false);
+      if (generation === processGenerationRef.current) {
+        setIsProcessing(false);
+        if (hfNodeId) setRunningHfNodeId(null);
+      }
     }
+  };
+
+  const runHfNode = async (nodeId: string) => {
+    await processImage({
+      skipHf: false,
+      previewId: nodeId,
+      hfNodeId: nodeId,
+      manual: true,
+      updatePreview: false
+    });
+    await processImage({ skipHf: true, previewId: "final", manual: true });
+    setPreviewNodeId("final");
+  };
+
+  const previewNode = (nodeId: string) => {
+    setPreviewNodeId(nodeId);
+    void processImage({ previewId: nodeId, manual: true });
   };
 
   useEffect(() => {
     if (!uploadedFile) return;
-    if (timerRef.current) window.clearTimeout(timerRef.current);
+    clearAutoProcessTimer();
     timerRef.current = window.setTimeout(() => {
-      void processImage();
+      void processImage({ skipHf: shouldSkipHfNodes(nodes), previewId: "final" });
     }, 180);
-  }, [nodes, uploadedFile, previewNodeId, branchSources, knownBranches]);
+  }, [nodes, uploadedFile, branchSources, knownBranches]);
 
   useEffect(() => {
     if (previewNodeId === "final") return;
@@ -181,7 +330,11 @@ export default function App() {
           />
         </label>
 
-        <button className="button" onClick={() => void processImage()} disabled={!uploadedFile || isProcessing}>
+        <button
+          className="button"
+          onClick={() => void processImage({ skipHf: false, previewId: "final", manual: true })}
+          disabled={!uploadedFile || isProcessing}
+        >
           {isProcessing ? "Processing..." : "Process"}
         </button>
 
@@ -205,7 +358,7 @@ export default function App() {
         <section className="panel">
           <div className="panel-head">
             <h3>Processed</h3>
-            <button className="button mini-preview" onClick={() => setPreviewNodeId("final")}>
+            <button className="button mini-preview" onClick={() => previewNode("final")}>
               Show Final
             </button>
           </div>
@@ -233,6 +386,9 @@ export default function App() {
                 </button>
                 <button className="menu-item" onClick={() => addNode("make_mask")}>
                   Make Mask
+                </button>
+                <button className="menu-item" onClick={() => addNode("hf_image_to_image")}>
+                  HF Image2Image
                 </button>
               </div>
             )}
@@ -273,7 +429,10 @@ export default function App() {
                   const index = nodes.findIndex((n) => n.id === node.id);
                   const branchIndex = knownBranches.indexOf(node.branch);
                   return (
-                    <div className="node-card" key={node.id}>
+                    <div
+                      className={`node-card${node.type === "hf_image_to_image" && runningHfNodeId === node.id ? " node-card-running" : ""}${node.type === "hf_image_to_image" && hfNodeIsDebug(node) ? " node-card-debug" : ""}`}
+                      key={node.id}
+                    >
                       <div className="node-head">
                         <strong>{node.type.toUpperCase()}</strong>
                         <div className="node-actions">
@@ -310,7 +469,7 @@ export default function App() {
                           </button>
                           <button
                             className={`mini ${previewNodeId === node.id ? "active-branch" : ""}`}
-                            onClick={() => setPreviewNodeId(node.id)}
+                            onClick={() => previewNode(node.id)}
                             title="Show this node in viewport"
                           >
                             V
@@ -389,6 +548,91 @@ export default function App() {
                               onChange={(e) =>
                                 updateNode(node.id, (n) =>
                                   withNoiseMask(n, e.target.value || undefined)
+                                )
+                              }
+                            >
+                              <option value="">No mask</option>
+                              {(maskPickerByNodeId.get(node.id) ?? []).map((maskNode) => (
+                                <option key={maskNode.id} value={maskNode.id}>
+                                  {maskNode.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </>
+                      )}
+
+                      {node.type === "hf_image_to_image" && (
+                        <>
+                          <label className="field">
+                            Model (Hub id)
+                            <input
+                              type="text"
+                              value={node.params.model}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) => withHfModel(n, e.target.value))
+                              }
+                              placeholder="timbrooks/instruct-pix2pix"
+                            />
+                          </label>
+                          <label className="field">
+                            Prompt
+                            <input
+                              type="text"
+                              value={node.params.prompt}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) => withHfPrompt(n, e.target.value))
+                              }
+                            />
+                          </label>
+                          <label className="field inline-field">
+                            <input
+                              type="checkbox"
+                              checked={node.params.debug ?? false}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) => withHfDebug(n, e.target.checked))
+                              }
+                            />
+                            Debug (red square, no API)
+                          </label>
+                          {!node.params.debug && (
+                            <label className="field">
+                              Provider
+                              <select
+                                value={node.params.provider ?? "replicate"}
+                                onChange={(e) =>
+                                  updateNode(node.id, (n) => withHfProvider(n, e.target.value))
+                                }
+                              >
+                                <option value="replicate">replicate</option>
+                                <option value="fal-ai">fal-ai</option>
+                                <option value="hf-inference">hf-inference</option>
+                              </select>
+                            </label>
+                          )}
+                          <button
+                            type="button"
+                            className="button hf-run-button"
+                            onClick={() => void runHfNode(node.id)}
+                            disabled={!uploadedFile || runningHfNodeId === node.id}
+                          >
+                            {runningHfNodeId === node.id ? (
+                              <span className="hf-run-loading">
+                                <span className="hf-spinner" aria-hidden="true" />
+                                Running…
+                              </span>
+                            ) : node.params.debug ? (
+                              "Run debug"
+                            ) : (
+                              "Run inference"
+                            )}
+                          </button>
+                          <label className="field">
+                            <select
+                              value={node.params.maskNodeId ?? ""}
+                              onChange={(e) =>
+                                updateNode(node.id, (n) =>
+                                  withHfMask(n, e.target.value || undefined)
                                 )
                               }
                             >
