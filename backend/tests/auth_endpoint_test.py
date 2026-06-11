@@ -104,7 +104,11 @@ class TestAuthEndpoints:
         async def mock_get_current_user(request=None, db=None):
             return 42
         app.dependency_overrides[get_current_user] = mock_get_current_user
+        user = MagicMock()
+        user.id = 42
+        user.username = "meow"
+        setup_mock_execute(mocked_db, user)
 
         response = test_client.get("/user-info")
         assert response.status_code == 200
-        assert response.json() == {"user_id": 42}
+        assert response.json() == {"user_id": 42, "username": "meow"}

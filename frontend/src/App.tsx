@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import {
   applyNodeUpdate,
   branchEntrySourceOptions,
@@ -22,7 +23,10 @@ import {
   withNoiseMask,
   withNoiseSeed
 } from "./pipelineLogic";
+import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "./authApi";
 import type { BranchSources, NodeType, PipelineNode } from "./pipelineTypes";
+
+type AuthMode = "login" | "register";
 
 export default function App() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -34,9 +38,22 @@ export default function App() {
   const [showNodePicker, setShowNodePicker] = useState(false);
   const [previewNodeId, setPreviewNodeId] = useState<string>("final");
   const [branchSources, setBranchSources] = useState<BranchSources>({});
+  const [authMode, setAuthMode] = useState<AuthMode>("register");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [currentUserLabel, setCurrentUserLabel] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const timerRef = useRef<number | null>(null);
 
   const canDownload = useMemo(() => Boolean(processedUrl), [processedUrl]);
+  const trimmedUsername = username.trim();
+  const authCanSubmit =
+    authMode === "register"
+      ? trimmedUsername.length >= 3 && password.length >= 6 && passwordConfirm.length > 0
+      : trimmedUsername.length > 0 && password.length > 0;
 
   useEffect(() => {
     return () => {
@@ -45,6 +62,20 @@ export default function App() {
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
   }, [originalUrl, processedUrl]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchCurrentUser()
+      .then((user) => {
+        if (isMounted) setCurrentUserLabel(user.username);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const onUpload = (file: File | null) => {
     if (!file) return;
@@ -72,6 +103,63 @@ export default function App() {
   const addNode = (type: NodeType) => {
     setNodes((prev) => [...prev, createNode(type)]);
     setShowNodePicker(false);
+  };
+
+  const switchAuthMode = (mode: AuthMode) => {
+    setAuthMode(mode);
+    setAuthError(null);
+    setAuthMessage(null);
+  };
+
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthError(null);
+    setAuthMessage(null);
+
+    if (authMode === "register" && password !== passwordConfirm) {
+      setAuthError("Passwords do not match");
+      return;
+    }
+
+    setIsAuthLoading(true);
+    try {
+      const user =
+        authMode === "register"
+          ? await registerUser(trimmedUsername, password).then(() => loginUser(trimmedUsername, password))
+          : await loginUser(trimmedUsername, password);
+
+      setCurrentUserLabel(user.username);
+      setUsername("");
+      setPassword("");
+      setPasswordConfirm("");
+      setAuthMessage(authMode === "register" ? "Account created" : "Signed in");
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Authentication failed");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setIsAuthLoading(true);
+    setAuthError(null);
+    setAuthMessage(null);
+
+    try {
+      await logoutUser();
+      setCurrentUserLabel(null);
+      setAuthMessage("Signed out");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Logout failed";
+      if (message === "Already logged out") {
+        setCurrentUserLabel(null);
+        setAuthMessage("Signed out");
+      } else {
+        setAuthError(message);
+      }
+    } finally {
+      setIsAuthLoading(false);
+    }
   };
 
   const maskPickerByNodeId = useMemo(() => {
@@ -171,30 +259,106 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <label className="button">
-          Upload
-          <input
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(e) => onUpload(e.target.files?.[0] ?? null)}
-          />
-        </label>
+        <div className="toolbar-actions">
+          <label className="button">
+            Upload
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => onUpload(e.target.files?.[0] ?? null)}
+            />
+          </label>
 
-        <button className="button" onClick={() => void processImage()} disabled={!uploadedFile || isProcessing}>
-          {isProcessing ? "Processing..." : "Process"}
-        </button>
+          <button className="button" onClick={() => void processImage()} disabled={!uploadedFile || isProcessing}>
+            {isProcessing ? "Processing..." : "Process"}
+          </button>
 
-        <a
-          className={`button ${!canDownload ? "button-disabled" : ""}`}
-          href={processedUrl ?? "#"}
-          download="processed.png"
-          onClick={(e) => {
-            if (!canDownload) e.preventDefault();
-          }}
-        >
-          Download
-        </a>
+          <a
+            className={`button ${!canDownload ? "button-disabled" : ""}`}
+            href={processedUrl ?? "#"}
+            download="processed.png"
+            onClick={(e) => {
+              if (!canDownload) e.preventDefault();
+            }}
+          >
+            Download
+          </a>
+        </div>
+
+        <div className="auth-shell">
+          {currentUserLabel ? (
+            <div className="auth-session">
+              <span className="session-name">{currentUserLabel}</span>
+              <button className="button auth-submit" onClick={() => void handleLogout()} disabled={isAuthLoading}>
+                {isAuthLoading ? "Signing out..." : "Logout"}
+              </button>
+              {authError && <span className="auth-feedback auth-error">{authError}</span>}
+            </div>
+          ) : (
+            <form className="auth-form" onSubmit={(event) => void submitAuth(event)}>
+              <div className="auth-mode" role="tablist" aria-label="Authentication mode">
+                <button
+                  type="button"
+                  className={`auth-mode-button ${authMode === "login" ? "active" : ""}`}
+                  onClick={() => switchAuthMode("login")}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  className={`auth-mode-button ${authMode === "register" ? "active" : ""}`}
+                  onClick={() => switchAuthMode("register")}
+                >
+                  Register
+                </button>
+              </div>
+              <input
+                className="auth-input"
+                type="text"
+                value={username}
+                minLength={authMode === "register" ? 3 : undefined}
+                maxLength={255}
+                autoComplete="username"
+                placeholder="Username"
+                aria-label="Username"
+                onChange={(e) => setUsername(e.target.value)}
+                required
+              />
+              <input
+                className="auth-input"
+                type="password"
+                value={password}
+                minLength={authMode === "register" ? 6 : undefined}
+                maxLength={128}
+                autoComplete={authMode === "register" ? "new-password" : "current-password"}
+                placeholder="Password"
+                aria-label="Password"
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              {authMode === "register" && (
+                <input
+                  className="auth-input"
+                  type="password"
+                  value={passwordConfirm}
+                  minLength={6}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  placeholder="Confirm"
+                  aria-label="Confirm password"
+                  onChange={(e) => setPasswordConfirm(e.target.value)}
+                  required
+                />
+              )}
+              <button className="button auth-submit" type="submit" disabled={!authCanSubmit || isAuthLoading}>
+                {isAuthLoading ? "Please wait..." : authMode === "register" ? "Create" : "Login"}
+              </button>
+              {authError && <span className="auth-feedback auth-error">{authError}</span>}
+              {authMessage && <span className="auth-feedback">{authMessage}</span>}
+            </form>
+          )}
+        </div>
       </header>
 
       <main className="viewport">

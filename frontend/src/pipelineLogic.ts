@@ -1,6 +1,6 @@
 import type { BlurNode, BranchSources, NoiseNode, NodeType, PipelineNode } from "./pipelineTypes";
 
-export const DEFAULT_PROCESS_API_URL = "http://localhost:8000/process-image";
+export const DEFAULT_PROCESS_API_URL = "/api/process-image";
 
 function normalizedBranch(branch: string): string {
   return branch.trim() || "main";
@@ -358,7 +358,7 @@ export async function fetchProcessedImageBlob(
   knownBranches: string[]
 ): Promise<Blob> {
   const formData = buildProcessFormData(file, nodes, previewNodeId, branchSources, knownBranches);
-  const response = await fetch(apiUrl, { method: "POST", body: formData });
+  const response = await fetch(apiUrl, { method: "POST", body: formData, credentials: "include" });
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || "Failed to process image");
