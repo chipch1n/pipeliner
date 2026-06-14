@@ -65,9 +65,29 @@ Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are liste
 
 ### Backend
 
-To run tests, first pip install everything from requirements.txt, then run the following from project root:
+#### Unit tests
+To run unit tests, first pip install everything from requirements.txt, then run the following from project root:
 ```bash
-python -m pytest ./backend/tests/
+python -m pytest ./backend/tests/unit
+```
+
+#### Integration tests
+To run integration tests, first pip install everything from requirements.txt, turn on docker daemon,
+fill pytest.ini file with correct configuration if it was changed in docker compose and run integration_test.sh from project root.
+
+In order to run tests in IDE, you need to manually run the app with docker:
+```bash
+docker compose up -d --build
+```
+
+Then call from project root:
+```bash
+python -m pytest ./backend/tests/integration
+```
+
+After that you need to remove the container:
+```bash
+docker compose rm -sf
 ```
 
 ## API
