@@ -27,7 +27,7 @@ export function createNode(type: NodeType): PipelineNode {
       type,
       branch: "main",
       params: {
-        model: "timbrooks/instruct-pix2pix",
+        model: "Qwen/Qwen-Image-Edit-2511",
         prompt: "enhance the image",
         provider: "replicate",
         debug: true

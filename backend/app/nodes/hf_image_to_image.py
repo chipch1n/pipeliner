@@ -8,7 +8,7 @@ from .base import BaseNode
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "timbrooks/instruct-pix2pix"
+DEFAULT_MODEL = "Qwen/Qwen-Image-Edit-2511"
 DEFAULT_PROMPT = "enhance the image"
 DEFAULT_PROVIDER = "replicate"
 HF_TIMEOUT_SEC = 120
@@ -46,10 +46,6 @@ def _friendly_hf_error(exc: Exception) -> str:
     if "sufficient permissions" in msg.lower() or "inference providers" in msg.lower():
         return (
             "Hugging Face Inference Providers rejected this token (403). "
-            "Use a new fine-grained token with 'Make calls to Inference Providers', update HF_TOKEN in .env, "
-            "then fully restart the backend (docker compose up --force-recreate). "
-            "If the permission is already enabled, you may still be using an old token from Windows "
-            "environment variables — remove stale HF_TOKEN from system env if needed."
         )
     return f"Hugging Face image_to_image failed: {exc}"
 

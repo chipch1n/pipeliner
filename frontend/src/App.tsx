@@ -234,6 +234,9 @@ export default function App() {
           if (prev && prev !== cachedUrl && !isUrlInHfCache(prev)) URL.revokeObjectURL(prev);
           return cachedUrl;
         });
+        if (options?.previewId && options?.updatePreview !== false) {
+          setPreviewNodeId(options.previewId);
+        }
         return;
       }
     }
@@ -572,7 +575,7 @@ export default function App() {
                               onChange={(e) =>
                                 updateNode(node.id, (n) => withHfModel(n, e.target.value))
                               }
-                              placeholder="timbrooks/instruct-pix2pix"
+                              placeholder="Qwen/Qwen-Image-Edit-2511"
                             />
                           </label>
                           <label className="field">
