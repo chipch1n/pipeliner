@@ -1,4 +1,7 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
 docker compose up -d --build
-python -m pytest ./backend/tests/integration
-docker compose rm -sf
-read -p "Press any key to continue..." x
+trap 'docker compose down' EXIT
+
+python -m pytest ./backend/tests/integration | tee integration-tests.log
