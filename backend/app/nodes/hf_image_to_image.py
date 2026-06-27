@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "Qwen/Qwen-Image-Edit-2511"
 DEFAULT_PROMPT = "enhance the image"
-DEFAULT_PROVIDER = "replicate"
+DEFAULT_PROVIDER = "fal-ai"
 HF_TIMEOUT_SEC = 120
 
 
