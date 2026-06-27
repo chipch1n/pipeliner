@@ -37,6 +37,7 @@ async def send_lockout_alert(username: str) -> None:
             use_tls=SMTP_CONFIG["use_tls"],
         )
     except Exception as exc:
-        logger.exception("Failed to send lockout email about user: %s", username, exc)
+        logger.exception("Failed to send lockout email about user: %s", username, exc_info=exc)
+        return
 
     logger.info("Sent lockout email about user: %s", username)

@@ -61,10 +61,26 @@ All variables have sensible defaults for development. Adjust in `docker-compose.
 docker compose up --build
 ```
 
-Frontend: [http://localhost:5173](http://localhost:5173)  
-Backend: [http://localhost:8000](http://localhost:8000)
+- Frontend: [http://localhost:5173](http://localhost:5173)
+- Backend: [http://localhost:8000](http://localhost:8000)
+- Mailpit inbox: [http://localhost:8025](http://localhost:8025)
 
-Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are listed in docker compose file
+Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are listed in docker compose file.
+
+### Local SMTP alerts with Mailpit
+
+Docker Compose starts Mailpit as a local SMTP test server. The backend sends lockout alerts to
+`mailpit:1025`, and captured messages are shown at [http://localhost:8025](http://localhost:8025).
+The local credentials in `docker-compose.yml` are accepted only by this development Mailpit container.
+
+To generate an alert:
+
+1. Register a user.
+2. Sign out.
+3. Try to sign in with a wrong password three times.
+4. Open the Mailpit inbox and select the `User Lockout` message.
+
+Mailpit is for local development and must not be exposed publicly with accept-any authentication.
 
 ## Testing
 

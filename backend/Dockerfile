@@ -17,7 +17,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY app/liquibase/changelog ./app/changelog
 COPY entrypoint.sh .
 
 RUN dos2unix entrypoint.sh && chmod +x entrypoint.sh
