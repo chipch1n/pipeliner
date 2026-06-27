@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 LIQUIBASE_URL="jdbc:postgresql://$DB_HOST:$DB_PORT/$DB_NAME"
 
 echo "Running migration..."
@@ -8,7 +10,7 @@ liquibase \
   --username="$DB_USER" \
   --password="$DB_PASSWORD" \
   --driver=org.postgresql.Driver \
-  --changelog-file=/app/liquibase/db.changelog-master.yaml \
+  --changelog-file=app/liquibase/db.changelog-master.yaml \
   update
 
 echo "Starting application..."

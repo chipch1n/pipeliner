@@ -7,6 +7,20 @@ services:
       POSTGRES_DB: pipeliner
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pipeliner"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.30.0
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "1025:1025"
+      - "8025:8025"
 
   backend:
     build:
@@ -21,8 +35,18 @@ services:
       DB_NAME: pipeliner
       DB_USER: postgres
       DB_PASSWORD: postgres
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_USER: pipeliner@example.com
+      SMTP_PASSWORD: pipeliner
+      SMTP_USE_TLS: "false"
       LOCKOUT_ALERT_EMAIL: admin@example.com
       FIXED_SALT: "ThisIsAFixedSaltThatShouldBeSecret"
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
 
   frontend:
     build:
