@@ -16,6 +16,7 @@ Minimal web‑based image processing pipeline prototype with user authentication
 - Add/remove/reorder linear processing nodes
 - Blur node (radius parameter)
 - Noise node (intensity parameter)
+- Hugging Face image-to-image node (model id, prompt, provider)
 - Process image through pipeline order
 - Side‑by‑side original/processed preview
 - Download processed image
@@ -39,7 +40,11 @@ Minimal web‑based image processing pipeline prototype with user authentication
 - PostgreSQL instance (provided by Docker Compose or external)
 
 ## Environment variables
-All variables have sensible defaults for development. Adjust in `docker-compose.yml` or export before running locally.
+Copy `.env.example` to `.env` in the project root and set your values (`.env` is gitignored). The backend loads it automatically on startup.
+
+For Docker, set the same variables in `docker-compose.yml` or pass a `.env` file to Compose.
+
+Other defaults apply when a variable is omitted.
 
 | Variable             | Default             | Description                                      |
 |----------------------|---------------------|--------------------------------------------------|
@@ -54,7 +59,8 @@ All variables have sensible defaults for development. Adjust in `docker-compose.
 | `SMTP_PASSWORD`      | (empty)             | SMTP authentication password                     |
 | `SMTP_USE_TLS`       | `true`              | Enable TLS for SMTP                              |
 | `LOCKOUT_ALERT_EMAIL`| `admin@example.com` | Recipient of lockout alert emails                |
-| `FIXED_SALT`         | (required)          | Fixed salt for SHA‑256 (change for production!)  |
+| `FIXED_SALT`         | (required)          | Fixed salt for SHA‑256 (set in `.env`; change for production!) |
+| `HF_TOKEN`           | (empty)             | Hugging Face token for `hf_image_to_image` node (also reads `HUGGINGFACE_HUB_TOKEN`) |
 
 ## Run with Docker
 ```bash
@@ -116,10 +122,21 @@ Multipart fields:
 {
   "nodes": [
     { "id": "blur-1", "type": "blur", "params": { "radius": 6 } },
-    { "id": "noise-1", "type": "noise", "params": { "intensity": 25 } }
+    { "id": "noise-1", "type": "noise", "params": { "intensity": 25 } },
+    {
+      "id": "hf-1",
+      "type": "hf_image_to_image",
+      "params": {
+        "model": "timbrooks/instruct-pix2pix",
+        "prompt": "turn it into a watercolor",
+        "provider": "replicate"
+      }
+    }
   ]
 }
 ```
+
+`hf_image_to_image` calls [Hugging Face Inference Providers](https://huggingface.co/docs/huggingface_hub/en/guides/inference) (`image_to_image`). Supported providers: `replicate`, `fal-ai`, `hf-inference`. Not every Hub model is available on every provider.
 
 `POST /register`
 

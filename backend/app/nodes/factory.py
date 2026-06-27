@@ -2,6 +2,7 @@ from typing import Any, Dict, Type
 
 from .base import BaseNode
 from .blur import BlurNode
+from .hf_image_to_image import HfImageToImageNode
 from .make_mask import MakeMaskNode
 from .noise import NoiseNode
 
@@ -9,6 +10,7 @@ NODE_REGISTRY: Dict[str, Type[BaseNode]] = {
     "blur": BlurNode,
     "noise": NoiseNode,
     "make_mask": MakeMaskNode,
+    "hf_image_to_image": HfImageToImageNode,
 }
 
 

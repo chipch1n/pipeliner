@@ -1,3 +1,10 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
+
+import base64
 import io
 import json
 import logging
@@ -338,7 +345,11 @@ def run_pipeline_pass(
     image: Image.Image,
     pipeline_nodes: List[Dict[str, Any]],
     branch_sources: Dict[str, str],
+    skip_node_types: set[str] | None = None,
+    cached_node_outputs: Dict[str, Image.Image] | None = None,
 ) -> Tuple[Image.Image, Dict[str, Image.Image]]:
+    skip_types = skip_node_types or set()
+    cached_outputs = cached_node_outputs or {}
     original_rgb = image.convert("RGB")
     branch_images: Dict[str, Image.Image] = {"main": original_rgb.copy()}
     node_outputs: Dict[str, Image.Image] = {}
@@ -373,12 +384,24 @@ def run_pipeline_pass(
                 branch_images[branch] = fork_from.copy()
                 branch_is_mask[branch] = node_id_is_mask_capable.get(src, False)
 
+        before = branch_images[branch]
+        if node_type in skip_types:
+            cached = cached_outputs.get(node_id)
+            if cached is not None:
+                out = cached.convert("RGB")
+                branch_images[branch] = out
+                node_outputs[node_id] = out
+            else:
+                branch_images[branch] = before
+                node_outputs[node_id] = before
+            node_id_is_mask_capable[node_id] = branch_is_mask.get(branch, False)
+            continue
+
         try:
             effect_node = create_node(node_type, params)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        before = branch_images[branch]
         effected = effect_node.apply(before)
 
         if node_type == "make_mask":
@@ -424,20 +447,110 @@ def process_pipeline(
     image: Image.Image,
     pipeline_nodes: List[Dict[str, Any]],
     branch_sources_raw: Dict[str, Any] | None = None,
+    skip_node_types: set[str] | None = None,
+    cached_node_outputs: Dict[str, Image.Image] | None = None,
 ) -> Tuple[Image.Image, Dict[str, Image.Image]]:
     resolved_sources = validate_branch_sources(pipeline_nodes, branch_sources_raw or {})
     ordered = order_pipeline_nodes(pipeline_nodes, resolved_sources)
-    return run_pipeline_pass(image=image, pipeline_nodes=ordered, branch_sources=resolved_sources)
+    return run_pipeline_pass(
+        image=image,
+        pipeline_nodes=ordered,
+        branch_sources=resolved_sources,
+        skip_node_types=skip_node_types,
+        cached_node_outputs=cached_node_outputs,
+    )
+
+
+def _parse_skip_node_types(raw: str | None) -> set[str]:
+    if not raw or not raw.strip():
+        return set()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid skip_node_types JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail="skip_node_types must be a JSON array")
+    return {str(item) for item in parsed}
+
+
+def _parse_cached_node_outputs(raw: str | None) -> Dict[str, Image.Image]:
+    if not raw or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid cached_node_outputs JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="cached_node_outputs must be a JSON object")
+    result: Dict[str, Image.Image] = {}
+    for node_id, encoded in parsed.items():
+        if not isinstance(encoded, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"cached_node_outputs[{node_id!r}] must be a base64 string",
+            )
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cached_node_outputs[{node_id!r}] is not valid base64",
+            ) from exc
+        try:
+            result[str(node_id)] = Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cached_node_outputs[{node_id!r}] is not a valid image",
+            ) from exc
+    return result
+
+
+async def _cached_images_from_form(form) -> Dict[str, Image.Image]:
+    """Multipart cached HF outputs: fields named cached_output:{nodeId}."""
+    result: Dict[str, Image.Image] = {}
+    prefix = "cached_output:"
+    for key in form.keys():
+        key_str = str(key)
+        if not key_str.startswith(prefix):
+            continue
+        node_id = key_str[len(prefix) :]
+        if not node_id:
+            continue
+        part = form.get(key)
+        if part is None or not hasattr(part, "read"):
+            continue
+        raw = await part.read()
+        if not raw:
+            continue
+        try:
+            result[node_id] = Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cached_output:{node_id} is not a valid image",
+            ) from exc
+    return result
 
 
 @app.post("/process-image")
-async def process_image(
-    image: UploadFile = File(...),
-    pipeline: str = Form(...),
-    preview_node_id: str | None = Form(default=None),
-) -> StreamingResponse:
+async def process_image(request: Request) -> StreamingResponse:
+    form = await request.form()
+
+    image_part = form.get("image")
+    if image_part is None or not hasattr(image_part, "read"):
+        raise HTTPException(status_code=400, detail="image file is required")
+
+    pipeline_raw = form.get("pipeline")
+    if pipeline_raw is None:
+        raise HTTPException(status_code=400, detail="pipeline is required")
+
+    preview_node_id = form.get("preview_node_id")
+    skip_node_types = form.get("skip_node_types")
+    cached_node_outputs = form.get("cached_node_outputs")
+
     try:
-        parsed = json.loads(pipeline)
+        parsed = json.loads(str(pipeline_raw))
         nodes = parsed.get("nodes", [])
         branch_sources_raw = parsed.get("branchSources") or parsed.get("branch_sources") or {}
         if not isinstance(branch_sources_raw, dict):
@@ -447,7 +560,7 @@ async def process_image(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid pipeline payload: {exc}") from exc
 
-    raw = await image.read(MAX_UPLOAD_BYTES + 1)
+    raw = await image_part.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
@@ -455,20 +568,35 @@ async def process_image(
         )
 
     try:
-        input_image = open_validated_upload(raw, image)
+        input_image = open_validated_upload(raw, image_part)
     except Exception as exc:
         logger.warning("Pipeline validation failed", exc_info=exc)
         raise
 
+    skip_types = _parse_skip_node_types(str(skip_node_types) if skip_node_types is not None else None)
+    cached_outputs = _parse_cached_node_outputs(
+        str(cached_node_outputs) if cached_node_outputs is not None else None
+    )
+    cached_outputs.update(await _cached_images_from_form(form))
+
     try:
-        final_image, node_outputs = process_pipeline(input_image, nodes, branch_sources_raw)
+        final_image, node_outputs = process_pipeline(
+            input_image,
+            nodes,
+            branch_sources_raw,
+            skip_node_types=skip_types,
+            cached_node_outputs=cached_outputs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to process pipeline", exc_info=exc)
         raise
 
     output_image = final_image
-    if preview_node_id:
-        output_image = node_outputs.get(preview_node_id, final_image)
+    preview_id = str(preview_node_id).strip() if preview_node_id is not None else ""
+    if preview_id:
+        output_image = node_outputs.get(preview_id, final_image)
 
     out_buffer = io.BytesIO()
     output_image.save(out_buffer, format="PNG")
@@ -537,6 +665,7 @@ async def read_current_user(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return {"user_id": user.id, "username": user.username}
+
 
 @app.post("/pipelines", response_model=dict, status_code=201)
 async def save_pipeline(
