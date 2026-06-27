@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .nodes import create_node
 from .db import get_db, User, Pipeline
-from .utils import UserRegister, UserLogin, UserResponse, LogoutResponse, PipelineListItem, PipelineResponse, \
-    PipelineSave
+from .utils import UserRegister, UserLogin, UserResponse, UserInfoResponse, LogoutResponse, PipelineListItem, \
+    PipelineResponse, PipelineSave
 from .auth import create_user, authenticate_user, create_session, delete_session, validate_session_token
 
 # Decompression bomb and memory exhaustion mitigations for uploaded images.
@@ -527,9 +527,16 @@ async def logout(
     response.delete_cookie("session_token")
     return {"message": "Logged out successfully"}
 
-@app.get("/user-info")
-async def read_current_user(user_id: int = Depends(get_current_user)):
-    return {"user_id": user_id}
+@app.get("/user-info", response_model=UserInfoResponse)
+async def read_current_user(
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"user_id": user.id, "username": user.username}
 
 @app.post("/pipelines", response_model=dict, status_code=201)
 async def save_pipeline(
@@ -537,8 +544,12 @@ async def save_pipeline(
     user_id: int = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    pipeline_name = payload.name.strip()
+    if not pipeline_name:
+        raise HTTPException(status_code=400, detail="Pipeline name cannot be blank")
+
     stmt = select(Pipeline).where(
-        and_(Pipeline.user_id == user_id, Pipeline.name == payload.name)
+        and_(Pipeline.user_id == user_id, Pipeline.name == pipeline_name)
     )
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -553,7 +564,7 @@ async def save_pipeline(
         logger.info(
             "Pipeline updated: user_id=%d pipeline_name=%s pipeline_id=%d",
             user_id,
-            payload.name,
+            pipeline_name,
             existing.id,
         )
 
@@ -563,7 +574,7 @@ async def save_pipeline(
     else:
         new_pipeline = Pipeline(
             user_id=user_id,
-            name=payload.name,
+            name=pipeline_name,
             pipeline_data=pipeline_data,
         )
         db.add(new_pipeline)
@@ -572,7 +583,7 @@ async def save_pipeline(
         logger.info(
             "Pipeline created: user_id=%d pipeline_name=%s pipeline_id=%d",
             user_id,
-            payload.name,
+            pipeline_name,
             new_pipeline.id,
         )
 

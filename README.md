@@ -8,7 +8,7 @@ Minimal web‑based image processing pipeline prototype with user authentication
 - **Database:** PostgreSQL (via SQLAlchemy async + asyncpg)
 - **Migrations:** Liquibase
 - **Authentication:** SHA‑256 hashed passwords (fixed salt), cookie‑based sessions
-- **Email:** aiosmtplib (lockout alerts)
+- **Email:** aiosmtplib
 
 ## Features
 ### Image processing
@@ -27,6 +27,11 @@ Minimal web‑based image processing pipeline prototype with user authentication
 - Logout (`POST /logout`) – clears session
 - Account lockout after 3 failed login attempts (10‑minute lock)
 - Email notification on lockout to a fixed address
+
+### Pipeline presets
+- Authenticated users can save multiple named pipeline presets
+- Presets are private to the current user and persisted in PostgreSQL
+- Saved presets can be loaded, overwritten, or deleted from the frontend
 
 ## Prerequisites
 - Docker & Docker Compose (for containerised run)
@@ -49,7 +54,7 @@ All variables have sensible defaults for development. Adjust in `docker-compose.
 | `SMTP_PASSWORD`      | (empty)             | SMTP authentication password                     |
 | `SMTP_USE_TLS`       | `true`              | Enable TLS for SMTP                              |
 | `LOCKOUT_ALERT_EMAIL`| `admin@example.com` | Recipient of lockout alert emails                |
-| `PASSWORD_SALT`      | (empty)             | Fixed salt for SHA‑256 (change for production!)  |
+| `FIXED_SALT`         | (required)          | Fixed salt for SHA‑256 (change for production!)  |
 
 ## Run with Docker
 ```bash
@@ -68,6 +73,15 @@ Default DB credentials (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB) are liste
 To run tests, first pip install everything from requirements.txt, then run the following from project root:
 ```bash
 python -m pytest ./backend/tests/
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm test
+npm run build
 ```
 
 ## API
@@ -117,9 +131,9 @@ Error (400): no session.
 `GET /user-info`
 
 Response:
-`{"user_id": "user_id"}`
+`{"user_id": 123, "username": "username"}`
 
-Ok (200): returns user id from current session.
+Ok (200): returns the user id and username from the current session.
 Error (401): invalid or no session.
 
 `POST /pipelines`

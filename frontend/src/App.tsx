@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import {
   applyNodeUpdate,
   branchEntrySourceOptions,
@@ -22,7 +23,33 @@ import {
   withNoiseMask,
   withNoiseSeed
 } from "./pipelineLogic";
+import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "./authApi";
+import { ApiError } from "./apiClient";
+import { deletePipeline, listPipelines, loadPipeline, savePipeline } from "./pipelineApi";
+import type { PipelineListItem } from "./pipelineApi";
 import type { BranchSources, NodeType, PipelineNode } from "./pipelineTypes";
+
+type AuthMode = "login" | "register";
+
+export function getAuthValidationMessage(
+  mode: AuthMode,
+  username: string,
+  password: string,
+  passwordConfirm: string
+): string | null {
+  const trimmedUsername = username.trim();
+  if (!trimmedUsername) return null;
+  if (mode === "register" && trimmedUsername.length < 3) {
+    return "Username must contain at least 3 characters";
+  }
+  if (!password) return null;
+  if (mode === "register" && password.length < 6) {
+    return "Password must contain at least 6 characters";
+  }
+  if (mode === "register" && !passwordConfirm) return null;
+  if (mode === "register" && password !== passwordConfirm) return "Passwords do not match";
+  return null;
+}
 
 export default function App() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -34,9 +61,30 @@ export default function App() {
   const [showNodePicker, setShowNodePicker] = useState(false);
   const [previewNodeId, setPreviewNodeId] = useState<string>("final");
   const [branchSources, setBranchSources] = useState<BranchSources>({});
+  const [authMode, setAuthMode] = useState<AuthMode>("register");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [currentUserLabel, setCurrentUserLabel] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [presets, setPresets] = useState<PipelineListItem[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [selectedPresetName, setSelectedPresetName] = useState("");
+  const [presetMessage, setPresetMessage] = useState<string | null>(null);
+  const [presetError, setPresetError] = useState<string | null>(null);
+  const [isPresetLoading, setIsPresetLoading] = useState(false);
   const timerRef = useRef<number | null>(null);
 
   const canDownload = useMemo(() => Boolean(processedUrl), [processedUrl]);
+  const trimmedUsername = username.trim();
+  const authValidationMessage = getAuthValidationMessage(authMode, username, password, passwordConfirm);
+  const hasRequiredAuthFields =
+    trimmedUsername.length > 0 &&
+    password.length > 0 &&
+    (authMode === "login" || passwordConfirm.length > 0);
+  const authCanSubmit = hasRequiredAuthFields && authValidationMessage === null;
 
   useEffect(() => {
     return () => {
@@ -45,6 +93,49 @@ export default function App() {
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
   }, [originalUrl, processedUrl]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchCurrentUser()
+      .then((user) => {
+        if (isMounted) setCurrentUserLabel(user.username);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUserLabel) {
+      setPresets([]);
+      setPresetName("");
+      setSelectedPresetName("");
+      setPresetMessage(null);
+      setPresetError(null);
+      return;
+    }
+
+    let isMounted = true;
+    setIsPresetLoading(true);
+    setPresetError(null);
+    listPipelines()
+      .then((items) => {
+        if (isMounted) setPresets(items);
+      })
+      .catch((err) => {
+        if (isMounted) setPresetError(err instanceof Error ? err.message : "Failed to load presets");
+      })
+      .finally(() => {
+        if (isMounted) setIsPresetLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUserLabel]);
 
   const onUpload = (file: File | null) => {
     if (!file) return;
@@ -72,6 +163,125 @@ export default function App() {
   const addNode = (type: NodeType) => {
     setNodes((prev) => [...prev, createNode(type)]);
     setShowNodePicker(false);
+  };
+
+  const switchAuthMode = (mode: AuthMode) => {
+    setAuthMode(mode);
+    setAuthError(null);
+    setAuthMessage(null);
+  };
+
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthError(null);
+    setAuthMessage(null);
+
+    if (!authCanSubmit) {
+      if (authValidationMessage) setAuthError(authValidationMessage);
+      return;
+    }
+
+    setIsAuthLoading(true);
+    try {
+      const user =
+        authMode === "register"
+          ? await registerUser(trimmedUsername, password).then(() => loginUser(trimmedUsername, password))
+          : await loginUser(trimmedUsername, password);
+
+      setCurrentUserLabel(user.username);
+      setUsername("");
+      setPassword("");
+      setPasswordConfirm("");
+      setAuthMessage(authMode === "register" ? "Account created" : "Signed in");
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Authentication failed");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setIsAuthLoading(true);
+    setAuthError(null);
+    setAuthMessage(null);
+
+    try {
+      await logoutUser();
+      setCurrentUserLabel(null);
+      setAuthMessage("Signed out");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 400) {
+        setCurrentUserLabel(null);
+        setAuthMessage("Signed out");
+      } else {
+        setAuthError(err instanceof Error ? err.message : "Logout failed");
+      }
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleSavePreset = async () => {
+    const name = presetName.trim();
+    setPresetMessage(null);
+    setPresetError(null);
+    if (!name) {
+      setPresetError("Enter a preset name");
+      return;
+    }
+
+    setIsPresetLoading(true);
+    try {
+      await savePipeline(name, nodes, branchSources);
+      const items = await listPipelines();
+      setPresets(items);
+      setPresetName(name);
+      setSelectedPresetName(name);
+      setPresetMessage(`Preset "${name}" saved`);
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "Failed to save preset");
+    } finally {
+      setIsPresetLoading(false);
+    }
+  };
+
+  const handleLoadPreset = async () => {
+    if (!selectedPresetName) return;
+    setPresetMessage(null);
+    setPresetError(null);
+    setIsPresetLoading(true);
+    try {
+      const saved = await loadPipeline(selectedPresetName);
+      setNodes(saved.pipeline_data.nodes);
+      setBranchSources(saved.pipeline_data.branch_sources ?? saved.pipeline_data.branchSources ?? {});
+      setPreviewNodeId("final");
+      setPresetName(saved.name);
+      setPresetMessage(`Preset "${saved.name}" loaded`);
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "Failed to load preset");
+    } finally {
+      setIsPresetLoading(false);
+    }
+  };
+
+  const handleDeletePreset = async () => {
+    if (!selectedPresetName) return;
+    const deletedName = selectedPresetName;
+    setPresetMessage(null);
+    setPresetError(null);
+    setIsPresetLoading(true);
+    try {
+      await deletePipeline(deletedName);
+      const items = await listPipelines();
+      setPresets(items);
+      setSelectedPresetName("");
+      if (presetName === deletedName) setPresetName("");
+      setPresetMessage(`Preset "${deletedName}" deleted`);
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "Failed to delete preset");
+    } finally {
+      setIsPresetLoading(false);
+    }
   };
 
   const maskPickerByNodeId = useMemo(() => {
@@ -171,30 +381,168 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <label className="button">
-          Upload
-          <input
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(e) => onUpload(e.target.files?.[0] ?? null)}
-          />
-        </label>
+        <div className="toolbar-actions">
+          <label className="button">
+            Upload
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => onUpload(e.target.files?.[0] ?? null)}
+            />
+          </label>
 
-        <button className="button" onClick={() => void processImage()} disabled={!uploadedFile || isProcessing}>
-          {isProcessing ? "Processing..." : "Process"}
-        </button>
+          <button className="button" onClick={() => void processImage()} disabled={!uploadedFile || isProcessing}>
+            {isProcessing ? "Processing..." : "Process"}
+          </button>
 
-        <a
-          className={`button ${!canDownload ? "button-disabled" : ""}`}
-          href={processedUrl ?? "#"}
-          download="processed.png"
-          onClick={(e) => {
-            if (!canDownload) e.preventDefault();
-          }}
-        >
-          Download
-        </a>
+          <a
+            className={`button ${!canDownload ? "button-disabled" : ""}`}
+            href={processedUrl ?? "#"}
+            download="processed.png"
+            onClick={(e) => {
+              if (!canDownload) e.preventDefault();
+            }}
+          >
+            Download
+          </a>
+
+          {currentUserLabel && (
+            <div className="preset-controls" aria-label="Pipeline presets">
+              <input
+                className="preset-input"
+                type="text"
+                value={presetName}
+                maxLength={255}
+                placeholder="Preset name"
+                aria-label="Preset name"
+                onChange={(event) => setPresetName(event.target.value)}
+              />
+              <button
+                className="button preset-button"
+                type="button"
+                onClick={() => void handleSavePreset()}
+                disabled={!presetName.trim() || isPresetLoading}
+              >
+                Save preset
+              </button>
+              <select
+                className="preset-select"
+                aria-label="Saved presets"
+                value={selectedPresetName}
+                onChange={(event) => {
+                  setSelectedPresetName(event.target.value);
+                  if (event.target.value) setPresetName(event.target.value);
+                }}
+                disabled={isPresetLoading || presets.length === 0}
+              >
+                <option value="">Select preset</option>
+                {presets.map((preset) => (
+                  <option key={preset.id} value={preset.name}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="button preset-button"
+                type="button"
+                onClick={() => void handleLoadPreset()}
+                disabled={!selectedPresetName || isPresetLoading}
+              >
+                Load
+              </button>
+              <button
+                className="button preset-button danger"
+                type="button"
+                onClick={() => void handleDeletePreset()}
+                disabled={!selectedPresetName || isPresetLoading}
+              >
+                Delete
+              </button>
+              {presetMessage && <span className="preset-feedback">{presetMessage}</span>}
+              {presetError && <span className="preset-feedback auth-error">{presetError}</span>}
+            </div>
+          )}
+        </div>
+
+        <div className="auth-shell">
+          {currentUserLabel ? (
+            <div className="auth-session">
+              <span className="session-name">{currentUserLabel}</span>
+              <button className="button auth-submit" onClick={() => void handleLogout()} disabled={isAuthLoading}>
+                {isAuthLoading ? "Signing out..." : "Logout"}
+              </button>
+              {authError && <span className="auth-feedback auth-error">{authError}</span>}
+            </div>
+          ) : (
+            <form className="auth-form" onSubmit={(event) => void submitAuth(event)}>
+              <div className="auth-mode" role="tablist" aria-label="Authentication mode">
+                <button
+                  type="button"
+                  className={`auth-mode-button ${authMode === "login" ? "active" : ""}`}
+                  onClick={() => switchAuthMode("login")}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  className={`auth-mode-button ${authMode === "register" ? "active" : ""}`}
+                  onClick={() => switchAuthMode("register")}
+                >
+                  Register
+                </button>
+              </div>
+              <input
+                className="auth-input"
+                type="text"
+                value={username}
+                minLength={authMode === "register" ? 3 : undefined}
+                maxLength={255}
+                autoComplete="username"
+                placeholder="Username"
+                aria-label="Username"
+                onChange={(e) => setUsername(e.target.value)}
+                required
+              />
+              <input
+                className="auth-input"
+                type="password"
+                value={password}
+                minLength={authMode === "register" ? 6 : undefined}
+                maxLength={128}
+                autoComplete={authMode === "register" ? "new-password" : "current-password"}
+                placeholder="Password"
+                aria-label="Password"
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              {authMode === "register" && (
+                <input
+                  className="auth-input"
+                  type="password"
+                  value={passwordConfirm}
+                  minLength={6}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  placeholder="Confirm"
+                  aria-label="Confirm password"
+                  onChange={(e) => setPasswordConfirm(e.target.value)}
+                  required
+                />
+              )}
+              <button className="button auth-submit" type="submit" disabled={!authCanSubmit || isAuthLoading}>
+                {isAuthLoading ? "Please wait..." : authMode === "register" ? "Create" : "Login"}
+              </button>
+              {authValidationMessage && (
+                <span className="auth-feedback auth-error" role="status">
+                  {authValidationMessage}
+                </span>
+              )}
+              {authError && <span className="auth-feedback auth-error">{authError}</span>}
+              {authMessage && <span className="auth-feedback">{authMessage}</span>}
+            </form>
+          )}
+        </div>
       </header>
 
       <main className="viewport">

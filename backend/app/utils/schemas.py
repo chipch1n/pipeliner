@@ -13,6 +13,10 @@ class UserLogin(BaseModel):
 class UserResponse(BaseModel):
     username: str
 
+class UserInfoResponse(BaseModel):
+    user_id: int
+    username: str
+
 class LogoutResponse(BaseModel):
     message: str
 
