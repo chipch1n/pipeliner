@@ -1,4 +1,6 @@
 import os
+
+from sqlalchemy import NullPool
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
 DATABASE_URL = (
@@ -7,7 +9,7 @@ DATABASE_URL = (
     f"@{os.getenv('DB_HOST', 'db')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'pipeliner')}"
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def get_db() -> AsyncSession:
