@@ -38,15 +38,15 @@ export function getAuthValidationMessage(
   passwordConfirm: string
 ): string | null {
   const trimmedUsername = username.trim();
-  if (!trimmedUsername) return "Enter a username";
+  if (!trimmedUsername) return null;
   if (mode === "register" && trimmedUsername.length < 3) {
     return "Username must contain at least 3 characters";
   }
-  if (!password) return "Enter a password";
+  if (!password) return null;
   if (mode === "register" && password.length < 6) {
     return "Password must contain at least 6 characters";
   }
-  if (mode === "register" && !passwordConfirm) return "Confirm your password";
+  if (mode === "register" && !passwordConfirm) return null;
   if (mode === "register" && password !== passwordConfirm) return "Passwords do not match";
   return null;
 }
@@ -80,7 +80,11 @@ export default function App() {
   const canDownload = useMemo(() => Boolean(processedUrl), [processedUrl]);
   const trimmedUsername = username.trim();
   const authValidationMessage = getAuthValidationMessage(authMode, username, password, passwordConfirm);
-  const authCanSubmit = authValidationMessage === null;
+  const hasRequiredAuthFields =
+    trimmedUsername.length > 0 &&
+    password.length > 0 &&
+    (authMode === "login" || passwordConfirm.length > 0);
+  const authCanSubmit = hasRequiredAuthFields && authValidationMessage === null;
 
   useEffect(() => {
     return () => {
@@ -172,8 +176,8 @@ export default function App() {
     setAuthError(null);
     setAuthMessage(null);
 
-    if (authValidationMessage) {
-      setAuthError(authValidationMessage);
+    if (!authCanSubmit) {
+      if (authValidationMessage) setAuthError(authValidationMessage);
       return;
     }
 

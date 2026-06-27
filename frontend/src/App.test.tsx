@@ -46,11 +46,12 @@ describe("App authentication and presets", () => {
     mockedSavePipeline.mockReset();
   });
 
-  it("explains why the registration button is disabled", async () => {
+  it("shows validation only after the user enters an invalid value", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Enter a username");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
     await user.type(screen.getByLabelText("Username"), "ab");
 
     expect(screen.getByRole("status")).toHaveTextContent(
