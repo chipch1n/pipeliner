@@ -24,9 +24,32 @@ import {
   withNoiseSeed
 } from "./pipelineLogic";
 import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "./authApi";
+import { ApiError } from "./apiClient";
+import { deletePipeline, listPipelines, loadPipeline, savePipeline } from "./pipelineApi";
+import type { PipelineListItem } from "./pipelineApi";
 import type { BranchSources, NodeType, PipelineNode } from "./pipelineTypes";
 
 type AuthMode = "login" | "register";
+
+export function getAuthValidationMessage(
+  mode: AuthMode,
+  username: string,
+  password: string,
+  passwordConfirm: string
+): string | null {
+  const trimmedUsername = username.trim();
+  if (!trimmedUsername) return "Enter a username";
+  if (mode === "register" && trimmedUsername.length < 3) {
+    return "Username must contain at least 3 characters";
+  }
+  if (!password) return "Enter a password";
+  if (mode === "register" && password.length < 6) {
+    return "Password must contain at least 6 characters";
+  }
+  if (mode === "register" && !passwordConfirm) return "Confirm your password";
+  if (mode === "register" && password !== passwordConfirm) return "Passwords do not match";
+  return null;
+}
 
 export default function App() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -46,14 +69,18 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [presets, setPresets] = useState<PipelineListItem[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [selectedPresetName, setSelectedPresetName] = useState("");
+  const [presetMessage, setPresetMessage] = useState<string | null>(null);
+  const [presetError, setPresetError] = useState<string | null>(null);
+  const [isPresetLoading, setIsPresetLoading] = useState(false);
   const timerRef = useRef<number | null>(null);
 
   const canDownload = useMemo(() => Boolean(processedUrl), [processedUrl]);
   const trimmedUsername = username.trim();
-  const authCanSubmit =
-    authMode === "register"
-      ? trimmedUsername.length >= 3 && password.length >= 6 && passwordConfirm.length > 0
-      : trimmedUsername.length > 0 && password.length > 0;
+  const authValidationMessage = getAuthValidationMessage(authMode, username, password, passwordConfirm);
+  const authCanSubmit = authValidationMessage === null;
 
   useEffect(() => {
     return () => {
@@ -76,6 +103,35 @@ export default function App() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentUserLabel) {
+      setPresets([]);
+      setPresetName("");
+      setSelectedPresetName("");
+      setPresetMessage(null);
+      setPresetError(null);
+      return;
+    }
+
+    let isMounted = true;
+    setIsPresetLoading(true);
+    setPresetError(null);
+    listPipelines()
+      .then((items) => {
+        if (isMounted) setPresets(items);
+      })
+      .catch((err) => {
+        if (isMounted) setPresetError(err instanceof Error ? err.message : "Failed to load presets");
+      })
+      .finally(() => {
+        if (isMounted) setIsPresetLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUserLabel]);
 
   const onUpload = (file: File | null) => {
     if (!file) return;
@@ -116,8 +172,8 @@ export default function App() {
     setAuthError(null);
     setAuthMessage(null);
 
-    if (authMode === "register" && password !== passwordConfirm) {
-      setAuthError("Passwords do not match");
+    if (authValidationMessage) {
+      setAuthError(authValidationMessage);
       return;
     }
 
@@ -150,15 +206,77 @@ export default function App() {
       setCurrentUserLabel(null);
       setAuthMessage("Signed out");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Logout failed";
-      if (message === "Already logged out") {
+      if (err instanceof ApiError && err.status === 400) {
         setCurrentUserLabel(null);
         setAuthMessage("Signed out");
       } else {
-        setAuthError(message);
+        setAuthError(err instanceof Error ? err.message : "Logout failed");
       }
     } finally {
       setIsAuthLoading(false);
+    }
+  };
+
+  const handleSavePreset = async () => {
+    const name = presetName.trim();
+    setPresetMessage(null);
+    setPresetError(null);
+    if (!name) {
+      setPresetError("Enter a preset name");
+      return;
+    }
+
+    setIsPresetLoading(true);
+    try {
+      await savePipeline(name, nodes, branchSources);
+      const items = await listPipelines();
+      setPresets(items);
+      setPresetName(name);
+      setSelectedPresetName(name);
+      setPresetMessage(`Preset "${name}" saved`);
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "Failed to save preset");
+    } finally {
+      setIsPresetLoading(false);
+    }
+  };
+
+  const handleLoadPreset = async () => {
+    if (!selectedPresetName) return;
+    setPresetMessage(null);
+    setPresetError(null);
+    setIsPresetLoading(true);
+    try {
+      const saved = await loadPipeline(selectedPresetName);
+      setNodes(saved.pipeline_data.nodes);
+      setBranchSources(saved.pipeline_data.branch_sources ?? saved.pipeline_data.branchSources ?? {});
+      setPreviewNodeId("final");
+      setPresetName(saved.name);
+      setPresetMessage(`Preset "${saved.name}" loaded`);
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "Failed to load preset");
+    } finally {
+      setIsPresetLoading(false);
+    }
+  };
+
+  const handleDeletePreset = async () => {
+    if (!selectedPresetName) return;
+    const deletedName = selectedPresetName;
+    setPresetMessage(null);
+    setPresetError(null);
+    setIsPresetLoading(true);
+    try {
+      await deletePipeline(deletedName);
+      const items = await listPipelines();
+      setPresets(items);
+      setSelectedPresetName("");
+      if (presetName === deletedName) setPresetName("");
+      setPresetMessage(`Preset "${deletedName}" deleted`);
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "Failed to delete preset");
+    } finally {
+      setIsPresetLoading(false);
     }
   };
 
@@ -284,6 +402,63 @@ export default function App() {
           >
             Download
           </a>
+
+          {currentUserLabel && (
+            <div className="preset-controls" aria-label="Pipeline presets">
+              <input
+                className="preset-input"
+                type="text"
+                value={presetName}
+                maxLength={255}
+                placeholder="Preset name"
+                aria-label="Preset name"
+                onChange={(event) => setPresetName(event.target.value)}
+              />
+              <button
+                className="button preset-button"
+                type="button"
+                onClick={() => void handleSavePreset()}
+                disabled={!presetName.trim() || isPresetLoading}
+              >
+                Save preset
+              </button>
+              <select
+                className="preset-select"
+                aria-label="Saved presets"
+                value={selectedPresetName}
+                onChange={(event) => {
+                  setSelectedPresetName(event.target.value);
+                  if (event.target.value) setPresetName(event.target.value);
+                }}
+                disabled={isPresetLoading || presets.length === 0}
+              >
+                <option value="">Select preset</option>
+                {presets.map((preset) => (
+                  <option key={preset.id} value={preset.name}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="button preset-button"
+                type="button"
+                onClick={() => void handleLoadPreset()}
+                disabled={!selectedPresetName || isPresetLoading}
+              >
+                Load
+              </button>
+              <button
+                className="button preset-button danger"
+                type="button"
+                onClick={() => void handleDeletePreset()}
+                disabled={!selectedPresetName || isPresetLoading}
+              >
+                Delete
+              </button>
+              {presetMessage && <span className="preset-feedback">{presetMessage}</span>}
+              {presetError && <span className="preset-feedback auth-error">{presetError}</span>}
+            </div>
+          )}
         </div>
 
         <div className="auth-shell">
@@ -354,6 +529,11 @@ export default function App() {
               <button className="button auth-submit" type="submit" disabled={!authCanSubmit || isAuthLoading}>
                 {isAuthLoading ? "Please wait..." : authMode === "register" ? "Create" : "Login"}
               </button>
+              {authValidationMessage && (
+                <span className="auth-feedback auth-error" role="status">
+                  {authValidationMessage}
+                </span>
+              )}
               {authError && <span className="auth-feedback auth-error">{authError}</span>}
               {authMessage && <span className="auth-feedback">{authMessage}</span>}
             </form>

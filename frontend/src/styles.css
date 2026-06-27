@@ -35,6 +35,46 @@ body {
   flex-wrap: wrap;
 }
 
+.preset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-left: 8px;
+  border-left: 1px solid #d0d0d0;
+}
+
+.preset-input,
+.preset-select {
+  min-height: 36px;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  padding: 7px 9px;
+}
+
+.preset-input {
+  width: 150px;
+}
+
+.preset-select {
+  max-width: 180px;
+}
+
+.preset-button {
+  min-width: auto;
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.preset-feedback {
+  max-width: 220px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: #555;
+}
+
 .auth-shell {
   display: flex;
   justify-content: flex-end;

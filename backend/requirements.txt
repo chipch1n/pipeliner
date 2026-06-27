@@ -9,3 +9,4 @@ aiosmtplib
 pydantic[email-validator]
 pytest-asyncio
 pytest-env
+httpx2

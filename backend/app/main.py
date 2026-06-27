@@ -544,8 +544,12 @@ async def save_pipeline(
     user_id: int = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    pipeline_name = payload.name.strip()
+    if not pipeline_name:
+        raise HTTPException(status_code=400, detail="Pipeline name cannot be blank")
+
     stmt = select(Pipeline).where(
-        and_(Pipeline.user_id == user_id, Pipeline.name == payload.name)
+        and_(Pipeline.user_id == user_id, Pipeline.name == pipeline_name)
     )
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -560,7 +564,7 @@ async def save_pipeline(
         logger.info(
             "Pipeline updated: user_id=%d pipeline_name=%s pipeline_id=%d",
             user_id,
-            payload.name,
+            pipeline_name,
             existing.id,
         )
 
@@ -570,7 +574,7 @@ async def save_pipeline(
     else:
         new_pipeline = Pipeline(
             user_id=user_id,
-            name=payload.name,
+            name=pipeline_name,
             pipeline_data=pipeline_data,
         )
         db.add(new_pipeline)
@@ -579,7 +583,7 @@ async def save_pipeline(
         logger.info(
             "Pipeline created: user_id=%d pipeline_name=%s pipeline_id=%d",
             user_id,
-            payload.name,
+            pipeline_name,
             new_pipeline.id,
         )
 

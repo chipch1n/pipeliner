@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import User, Session
@@ -95,7 +95,10 @@ async def delete_session(db: AsyncSession, token: str) -> bool:
     return result.rowcount > 0
 
 async def validate_session_token(db: AsyncSession, token: str) -> Optional[int]:
-    stmt = select(Session.user_id).where(Session.token == token and Session.created_at < datetime.now() - timedelta(weeks=1))
+    expires_after = datetime.now(timezone.utc) - timedelta(weeks=1)
+    stmt = select(Session.user_id).where(
+        and_(Session.token == token, Session.created_at >= expires_after)
+    )
     result = await db.execute(stmt)
     user_id = result.scalar_one_or_none()
     return user_id
