@@ -27,8 +27,8 @@ export function createNode(type: NodeType): PipelineNode {
       type,
       branch: "main",
       params: {
-        model: "Qwen/Qwen-Image-Edit-2511",
-        prompt: "enhance the image",
+        model: "Qwen/Qwen-Image-Edit",
+        prompt: "make cool",
         provider: "replicate",
         debug: true
       }
