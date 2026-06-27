@@ -8,7 +8,7 @@ Minimal web‑based image processing pipeline prototype with user authentication
 - **Database:** PostgreSQL (via SQLAlchemy async + asyncpg)
 - **Migrations:** Liquibase
 - **Authentication:** SHA‑256 hashed passwords (fixed salt), cookie‑based sessions
-- **Email:** aiosmtplib (lockout alerts)
+- **Email:** aiosmtplib
 
 ## Features
 ### Image processing
