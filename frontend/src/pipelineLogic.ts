@@ -1,4 +1,11 @@
-import type { BlurNode, BranchSources, NoiseNode, NodeType, PipelineNode } from "./pipelineTypes";
+import type {
+  BlurNode,
+  BranchSources,
+  HfImageToImageNode,
+  NoiseNode,
+  NodeType,
+  PipelineNode
+} from "./pipelineTypes";
 
 export const DEFAULT_PROCESS_API_URL = "/api/process-image";
 
@@ -14,6 +21,19 @@ export function createNode(type: NodeType): PipelineNode {
   if (type === "noise") {
     return { id, type, branch: "main", params: { intensity: 20, seed: 0 } };
   }
+  if (type === "hf_image_to_image") {
+    return {
+      id,
+      type,
+      branch: "main",
+      params: {
+        model: "Qwen/Qwen-Image-Edit-2511",
+        prompt: "enhance the image",
+        provider: "replicate",
+        debug: true
+      }
+    };
+  }
   return { id, type, branch: "main", params: { threshold: 128, invert: false } };
 }
 
@@ -24,22 +44,19 @@ export function applyNodeUpdate(
 ): PipelineNode[] {
   const previousMaskByNodeId = new Map(
     prev
-      .filter((n): n is BlurNode | NoiseNode => n.type === "blur" || n.type === "noise")
+      .filter(
+        (n): n is BlurNode | NoiseNode | HfImageToImageNode =>
+          n.type === "blur" || n.type === "noise" || n.type === "hf_image_to_image"
+      )
       .map((n) => [n.id, n.params.maskNodeId])
   );
 
   const next = prev.map((n) => (n.id === id ? updater(n) : n));
 
   return next.map((n): PipelineNode => {
-    if (n.type !== "blur" && n.type !== "noise") return n;
+    if (n.type !== "blur" && n.type !== "noise" && n.type !== "hf_image_to_image") return n;
     const prevMask = previousMaskByNodeId.get(n.id);
     if (!prevMask || n.params.maskNodeId) return n;
-    if (n.type === "blur") {
-      return {
-        ...n,
-        params: { ...n.params, maskNodeId: prevMask }
-      };
-    }
     return {
       ...n,
       params: { ...n.params, maskNodeId: prevMask }
@@ -126,7 +143,12 @@ export function maskSourceOptionsForConsumer(
   branchSources: BranchSources = {}
 ) {
   const consumer = nodes.find((n) => n.id === consumerId);
-  if (!consumer || (consumer.type !== "blur" && consumer.type !== "noise")) return [];
+  if (
+    !consumer ||
+    (consumer.type !== "blur" && consumer.type !== "noise" && consumer.type !== "hf_image_to_image")
+  ) {
+    return [];
+  }
   const providers = maskCapableNodeIds(nodes, branchSources);
 
   return nodes
@@ -327,7 +349,9 @@ export function buildProcessFormData(
   nodes: PipelineNode[],
   previewNodeId: string,
   branchSources: BranchSources,
-  knownBranches: string[]
+  knownBranches: string[],
+  skipNodeTypes: string[] = [],
+  cachedNodeOutputBlobs: Map<string, Blob> = new Map()
 ): FormData {
   const resolved = resolveBranchSourcesForSubmit(nodes, knownBranches, branchSources);
   const payload = {
@@ -346,6 +370,12 @@ export function buildProcessFormData(
   if (previewNodeId !== "final") {
     formData.append("preview_node_id", previewNodeId);
   }
+  if (skipNodeTypes.length > 0) {
+    formData.append("skip_node_types", JSON.stringify(skipNodeTypes));
+  }
+  for (const [nodeId, blob] of cachedNodeOutputBlobs) {
+    formData.append(`cached_output:${nodeId}`, blob, `${nodeId}.png`);
+  }
   return formData;
 }
 
@@ -355,9 +385,19 @@ export async function fetchProcessedImageBlob(
   nodes: PipelineNode[],
   previewNodeId: string,
   branchSources: BranchSources,
-  knownBranches: string[]
+  knownBranches: string[],
+  skipNodeTypes: string[] = [],
+  cachedNodeOutputBlobs: Map<string, Blob> = new Map()
 ): Promise<Blob> {
-  const formData = buildProcessFormData(file, nodes, previewNodeId, branchSources, knownBranches);
+  const formData = buildProcessFormData(
+    file,
+    nodes,
+    previewNodeId,
+    branchSources,
+    knownBranches,
+    skipNodeTypes,
+    cachedNodeOutputBlobs
+  );
   const response = await fetch(apiUrl, { method: "POST", body: formData, credentials: "include" });
   if (!response.ok) {
     const message = await response.text();
@@ -407,4 +447,82 @@ export function withMakeMaskThreshold(n: PipelineNode, threshold: number): Pipel
 
 export function withMakeMaskInvert(n: PipelineNode, invert: boolean): PipelineNode {
   return n.type === "make_mask" ? { ...n, params: { ...n.params, invert } } : n;
+}
+
+export function withHfModel(n: PipelineNode, model: string): PipelineNode {
+  return n.type === "hf_image_to_image" ? { ...n, params: { ...n.params, model } } : n;
+}
+
+export function withHfPrompt(n: PipelineNode, prompt: string): PipelineNode {
+  return n.type === "hf_image_to_image" ? { ...n, params: { ...n.params, prompt } } : n;
+}
+
+export function withHfProvider(n: PipelineNode, provider: string): PipelineNode {
+  return n.type === "hf_image_to_image" ? { ...n, params: { ...n.params, provider } } : n;
+}
+
+export function withHfMask(n: PipelineNode, maskNodeId: string | undefined): PipelineNode {
+  return n.type === "hf_image_to_image" ? { ...n, params: { ...n.params, maskNodeId } } : n;
+}
+
+export function withHfDebug(n: PipelineNode, debug: boolean): PipelineNode {
+  return n.type === "hf_image_to_image" ? { ...n, params: { ...n.params, debug } } : n;
+}
+
+export function hfNodeIsDebug(node: PipelineNode): boolean {
+  return node.type === "hf_image_to_image" && node.params.debug === true;
+}
+
+export function pipelineHasHfNode(nodes: PipelineNode[]): boolean {
+  return nodes.some((n) => n.type === "hf_image_to_image");
+}
+
+/** Auto-preview skips HF inference so local nodes update quickly. Manual runs pass skipHf: false. */
+export function shouldSkipHfNodes(nodes: PipelineNode[]): boolean {
+  return pipelineHasHfNode(nodes);
+}
+
+export function hfCacheSignature(
+  hfNodeId: string,
+  nodes: PipelineNode[],
+  branchSources: BranchSources,
+  knownBranches: string[]
+): string | null {
+  const hfNode = nodes.find((n) => n.id === hfNodeId);
+  if (!hfNode || hfNode.type !== "hf_image_to_image") return null;
+
+  const resolved = resolveBranchSourcesForSubmit(nodes, knownBranches, branchSources);
+
+  let ordered: PipelineNode[];
+  try {
+    ordered = orderPipelineNodes(nodes, resolved);
+  } catch {
+    return null;
+  }
+
+  const hfIndex = ordered.findIndex((n) => n.id === hfNodeId);
+  if (hfIndex < 0) return null;
+
+  const branch = hfNode.branch;
+  const branchEntry = branch === "main" ? "original" : (resolved[branch] ?? "original");
+  const upstream = ordered.slice(0, hfIndex).map((n) => ({
+    id: n.id,
+    type: n.type,
+    branch: n.branch,
+    params: n.params
+  }));
+
+  return JSON.stringify({ upstream, branchEntry, hfParams: hfNode.params });
+}
+
+export type HfOutputCacheEntry = { url: string; signature: string; blob: Blob };
+
+export function getCachedNodeOutputBlobs(
+  cache: Map<string, HfOutputCacheEntry>
+): Map<string, Blob> {
+  const blobs = new Map<string, Blob>();
+  for (const [nodeId, entry] of cache) {
+    blobs.set(nodeId, entry.blob);
+  }
+  return blobs;
 }

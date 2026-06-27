@@ -337,3 +337,44 @@ class TestRunPipelinePass:
             run_pipeline_pass(test_image, nodes, {"main": "original"})
 
         assert exc.value.status_code == 400
+
+    def test_skip_hf_skips_debug_node_without_cache(self):
+        image = Image.new("RGB", (10, 10), color=(0, 0, 255))
+        nodes = [
+            {"id": "hf", "type": "hf_image_to_image", "params": {"model": "x/y", "debug": True}},
+        ]
+
+        final, outputs = run_pipeline_pass(
+            image,
+            nodes,
+            {"main": "original"},
+            skip_node_types={"hf_image_to_image"},
+        )
+
+        assert outputs["hf"].getpixel((0, 0)) == (0, 0, 255)
+        assert final.getpixel((0, 0)) == (0, 0, 255)
+
+    def test_skip_hf_uses_cached_output_for_downstream(self, test_image):
+        hf_cached = Image.new("RGB", test_image.size, color=(0, 255, 0))
+        nodes = [
+            {"id": "blur", "type": "blur", "params": {"radius": 5}},
+            {"id": "hf", "type": "hf_image_to_image", "params": {"model": "x/y"}},
+            {"id": "noise", "type": "noise", "params": {"intensity": 100, "seed": 1}},
+        ]
+
+        without_cache, _ = run_pipeline_pass(
+            test_image.copy(),
+            nodes,
+            {"main": "original"},
+            skip_node_types={"hf_image_to_image"},
+        )
+        with_cache, outputs = run_pipeline_pass(
+            test_image.copy(),
+            nodes,
+            {"main": "original"},
+            skip_node_types={"hf_image_to_image"},
+            cached_node_outputs={"hf": hf_cached},
+        )
+
+        assert outputs["hf"].getpixel((0, 0)) == (0, 255, 0)
+        assert without_cache.tobytes() != with_cache.tobytes()
