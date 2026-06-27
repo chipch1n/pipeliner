@@ -457,13 +457,13 @@ async def process_image(
     try:
         input_image = open_validated_upload(raw, image)
     except Exception as exc:
-        logger.warning("Pipeline validation failed", exc)
+        logger.warning("Pipeline validation failed", exc_info=exc)
         raise
 
     try:
         final_image, node_outputs = process_pipeline(input_image, nodes, branch_sources_raw)
     except Exception as exc:
-        logger.exception("Failed to process pipeline", exc)
+        logger.exception("Failed to process pipeline", exc_info=exc)
         raise
 
     output_image = final_image

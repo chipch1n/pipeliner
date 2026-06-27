@@ -21,7 +21,7 @@ from backend.app.db import get_db
 from backend.app.main import (
     app,
 )
-from backend.tests.util.db_util import setup_mock_execute
+from backend.tests.unit.util.db_util import setup_mock_execute
 
 mocked_db = AsyncMock(spec=AsyncSession)
 
